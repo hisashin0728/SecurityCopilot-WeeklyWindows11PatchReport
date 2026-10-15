@@ -4,6 +4,29 @@ Microsoft Graph Windows Updates カタログの最新品質更新と、Microsoft
 `DeviceInfo` の Windows 11 OS ビルドを週次で突合し、HTML メールを送信する
 Security Copilot Standard Agent です。
 
+## 確定構成
+
+2026-10-15時点の導入手順です。導入先でエージェントの実行とレポート生成を確認し、
+Graph取得件数の上限とDeviceInfoのRevision取得方法を反映しています。
+
+| 項目 | 確定値・方式 |
+|---|---|
+| Defenderの認証 | エージェントの代理ユーザーによるAdvanced Hunting |
+| Graphの認証 | 専用EntraアプリのOAuth 2.0 Client Credentials |
+| Graphの最小権限 | Application permission `WindowsUpdates.Read.All`、管理者同意必須 |
+| Tenant ID | 生成スクリプトの`-TenantId`へ指定 |
+| アップロード対象 | 生成した`WeeklyWindows11PatchReport.local.yaml`だけ |
+| OAuthのResource | `https://graph.microsoft.com`（`/.default`なし） |
+| マニフェスト内のScopes | `https://graph.microsoft.com/.default` |
+| Graph取得件数 | `$top=5`、最大5（OpenAPI 1.2） |
+| 端末のRevision | `DeviceInfo.OsBuildRevision`を優先、完全な`OSVersion`を代替に使用 |
+| メール送信 | Deploy to Azureで展開したLogic Appと、認証済みのOffice 365 API接続 |
+| 実行間隔 | 604,800秒（7日）。固定の曜日・時刻やJSTタイムゾーンを指定する設定ではない |
+
+初めて導入する場合は、[前提条件](#前提条件)と[認証アーキテクチャと最小権限](#認証アーキテクチャと最小権限)を
+確認した後、[導入手順](#導入手順)を順番に実施してください。
+稼働中の環境を更新する場合は、[更新と運用](#更新と運用)を参照してください。
+
 ## 分析内容
 
 - Windows 11 feature version ごとの最新月例セキュリティ更新（KB、公開日、目標ビルド）
@@ -20,7 +43,7 @@ Security Copilot Standard Agent です。
 |---|---|
 | 適用済み | 同じ feature version / buildNumber の Defender Revision が Graph 最新基準以上 |
 | 遅延 | 同じ buildNumber で update build revision が最新基準未満 |
-| 機能更新遅延 | サービス終了版、または最新基準に対応しない旧 feature version |
+| 機能更新遅延 | サービス終了など、機能更新が必要と確認できた旧feature version。Graph基準がないだけでは判定しない |
 | 判定不能 | Graph 基準、対応build、Revisionが不足、またはRevisionの情報が不整合 |
 
 `適用率 = 適用済み / 判定可能端末`、`遅延率 = 遅延端末 / 判定可能端末`
@@ -83,6 +106,9 @@ Revision番号差は未適用パッチ件数や月例更新の未適用月数で
 3. 専用EntraアプリにGraphアプリケーション権限 `WindowsUpdates.Read.All` を付与し、管理者同意済み
 4. メール送信用 Logic App と Office 365 接続が利用可能
 5. Security Copilot から GitHub raw の OpenAPI URL へ HTTPS アクセス可能
+6. カスタムプラグインの登録とエージェント設定を行える権限
+7. AzureでLogic AppとOffice 365 API接続を作成できる権限、および送信用Microsoft 365アカウント
+8. ローカルでPowerShellが利用可能。診断スクリプトにはPowerShell 7以降が必須
 
 Microsoft Graph `/beta` API は変更される可能性があり、本番利用は Microsoft のサポート対象外です。
 運用前と Graph API 変更時に OpenAPI 応答スキーマを再確認してください。
@@ -116,7 +142,8 @@ Security Copilot Agent
 Defender KQLスキルが`DeviceInfo`を照会します。
 
 個人の管理者アカウントではなく、エージェント専用ユーザーを推奨します。代理認証は
-Security Copilot画面に表示される期限（現在は90日）までに再認証してください。
+Security Copilot画面に表示される有効期限を基準に再認証してください
+（検証環境では90日）。Graph用サービスプリンシパルとは別の認証です。
 
 #### 推奨: Microsoft Defender統合RBAC
 
@@ -230,10 +257,9 @@ https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/oauth2/v2
 ```
 
 Security Copilotのプラグインマニフェストには、Tenant IDだけを受け取って
-`TokenEndpoint`へ文字列展開する正式な設定項目は確認できていません。そのため、未検証の
-`{{TenantId}}`構文は使用しません。また、今回の環境では`TokenEndpoint`を省略すると
-登録時に`Value cannot be null. (Parameter 'uriString')`で失敗します。
-認証画面で後から入力する方式ではなく、URLを設定したマニフェストを生成して登録します。
+`TokenEndpoint`へ文字列展開する仕組みには依存しません。
+本構成では、生成スクリプトがTenant IDをURLへ埋め込んだマニフェストを作成します。
+`TokenEndpoint`は削除せず、認証画面で後から入力する方式も使用しません。
 
 公開テンプレートには次が設定されています。このテンプレート自体はアップロードしないでください。
 
@@ -253,9 +279,29 @@ Logic AppのOffice 365 API接続は、上記2つの認証とは別です。デ�
 使用するアカウントでAPI接続を認証します。このアカウントには、指定された送信元として
 メールを送信できる権限だけを付与してください。
 
-## デプロイ
+## 導入手順
 
-### 1. Logic App
+### 1. 成果物と認証主体の準備
+
+リポジトリを取得します。Gitを使用する場合は次を実行します。
+Gitがない場合はGitHubの「Code」からZIPをダウンロードして展開してください。
+
+```powershell
+git clone https://github.com/hisashin0728/SecurityCopilot-WeeklyWindows11PatchReport.git
+Set-Location .\SecurityCopilot-WeeklyWindows11PatchReport
+```
+
+次のファイルが同じフォルダーにあることを確認します。
+
+- [マニフェストの公開テンプレート](./WeeklyWindows11PatchReport.yaml)
+- [マニフェスト生成スクリプト](./New-WeeklyWindows11PatchReportManifest.ps1)
+- [Graph診断スクリプト](./Test-WeeklyWindows11PatchReportGraph.ps1)
+
+前述の認証・最小権限の手順に従い、Defender用の代理ユーザーとGraph用Entraアプリを準備します。
+生成・診断に使用するTenant ID、Application (client) IDを控えます。
+Client Secretは安全に保管し、共有リポジトリやマニフェストへ記載しないでください。
+
+### 2. Logic Appの展開とOffice 365接続の認証
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fhisashin0728%2FSecurityCopilot-WeeklyWindows11PatchReport%2Frefs%2Fheads%2Fmain%2FWeeklyWindows11PatchReport_LogicApp_ARM.json)
 
@@ -266,16 +312,34 @@ Logic AppのOffice 365 API接続は、上記2つの認証とは別です。デ�
 3. リージョン
 4. 送信先メールアドレス
 5. Logic App 名（既定値: `PluginLogicApp_WeeklyWindows11PatchReport`）
+6. Office 365接続名（既定値: `office365`）。既存の接続と区別する必要があれば別名を指定
 
 デプロイ後、Azure ポータルで作成された Office 365 API 接続を開き、
 送信に使用するアカウントで認証してください。ARM テンプレートのデプロイだけでは
 Office 365 接続のサインインは完了しません。
+続いて、Logic AppのSubscription ID、Resource Group、Workflow Nameを控えます。
+Workflow NameはOffice 365接続名ではなく、展開したLogic Appリソースの名前です。
 
 ボタンが利用できない場合は、
 [Azure ポータルでカスタム テンプレートを開く](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fhisashin0728%2FSecurityCopilot-WeeklyWindows11PatchReport%2Frefs%2Fheads%2Fmain%2FWeeklyWindows11PatchReport_LogicApp_ARM.json)
 リンクを直接使用してください。
 
-### 2. OpenAPI
+### 3. Graph認証とAPIの疎通確認
+
+PowerShell 7以降で、Security Copilotに設定するものと同じEntraアプリを使用して確認します。
+以下のTenant IDとClient IDは例です。実際の値へ変更してください。
+
+```powershell
+.\Test-WeeklyWindows11PatchReportGraph.ps1 `
+  -TenantId '11111111-2222-3333-4444-555555555555' `
+  -ClientId 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+```
+
+Client Secretの**値**を非表示の入力欄へ入力し、5ケースすべてがHTTP 200になることを確認します。
+失敗した場合は、[トラブルシューティング](#トラブルシューティング)で原因を解消してから進みます。
+この診断はメール送信や更新プログラムの変更を行いません。
+
+#### OpenAPI参照先
 
 マニフェストには、GitHub raw の公開済み OpenAPI URL が設定されています。
 
@@ -290,10 +354,10 @@ OpenAPI ファイル単体は Security Copilot のプラグイン マニフェ�
 Security Copilot は `WeeklyWindows11PatchReport.yaml` の `OpenApiSpecUrl` を読み取り、
 実行時にこの OpenAPI ファイルを HTTPS で取得します。
 
-### 3. Security Copilot
+### 4. Tenant IDを指定してアップロード用マニフェストを生成
 
-テンプレートと[生成スクリプト](./New-WeeklyWindows11PatchReportManifest.ps1)を同じフォルダーへ保存し、
-そのフォルダーで次を実行します。例のGUIDは実際のDirectory (tenant) IDへ変更してください。
+手順1で取得したフォルダーで、[生成スクリプト](./New-WeeklyWindows11PatchReportManifest.ps1)を
+実行します。例のGUIDは実際のDirectory (tenant) IDへ変更してください。
 
 ```powershell
 .\New-WeeklyWindows11PatchReportManifest.ps1 -TenantId '11111111-2222-3333-4444-555555555555'
@@ -304,15 +368,83 @@ Security Copilot は `WeeklyWindows11PatchReport.yaml` の `OpenApiSpecUrl` を�
 既定の生成ファイルは`.gitignore`で除外しています。別名で生成したファイルも公開GitHubへ
 コミットしないでください。Client Secretは生成ファイルへ記載しません。
 
-1. `-TenantId`パラメーターを指定してアップロード用マニフェストを生成
-2. **生成された`WeeklyWindows11PatchReport.local.yaml`だけ**をカスタム プラグインとしてアップロード
-3. エージェントの代理認証に、前述のAdvanced Hunting読み取り権限を持つユーザーを割り当て
-4. Graph APIプラグインに、前述の専用EntraアプリのClient ID、Client Secret、
-   Resourceを設定
-5. Logic App の Subscription ID、Resource Group、Workflow Name を設定
-6. Agent を有効化
+生成されたファイルの`TokenEndpoint`が、実際のTenant IDを含む
+`https://login.microsoftonline.com/<実際のTenant ID>/oauth2/v2.0/token`になっていることを確認します。
+実ファイルには`<`と`>`を残しません。
 
-Agent は 604,800 秒（7 日）ごとに実行されます。
+### 5. Security Copilotへの登録と設定
+
+1. Security Copilotで「カスタム プラグインの追加」を開く
+2. **生成された`WeeklyWindows11PatchReport.local.yaml`だけ**をファイルとしてアップロード
+3. プラグインのOAuth認証に、手順3と同じClient ID、Client Secretの**値**、
+   Resource=`https://graph.microsoft.com`を設定
+4. 次のLogic App設定を入力
+5. エージェントの代理認証に、Advanced Hunting読み取り権限を持つユーザーを割り当て
+
+| プラグインの設定項目 | 設定値 |
+|---|---|
+| `LogicAppSubscriptionId` / Logic App Subscription ID | 手順2で控えたAzureサブスクリプションID |
+| `LogicAppResourceGroup` / Logic App Resource Group | Logic Appが存在するリソースグループ名 |
+| `LogicAppWorkflowName` / Logic App Workflow Name | Logic Appリソース名。既定値は`PluginLogicApp_WeeklyWindows11PatchReport` |
+
+Graph認証はプラグインのAPI認証、Defender認証はエージェントの代理認証です。
+代理認証の画面にClient IDやClient Secretを設定するものではありません。
+メールの送信先はLogic Appの`emailAddress`で設定し、マニフェスト生成の引数には指定しません。
+
+### 6. 初回実行と週次運用の開始
+
+最初に各スキルを単独で実行し、その後エージェント全体を手動で実行します。
+メール送信スキルは実際にメールを送信するため、宛先を確認してから実行してください。
+
+| 確認対象 | 期待する結果 |
+|---|---|
+| `ListWindowsQualityUpdates` | 400/401/403なく品質更新カタログとproductRevisionsを取得できる |
+| `GetWindows11PatchInventory` | `Revision`、`RevisionSource`、`FullOSVersion`を含む台数集計が返る |
+| `GetWindows11PatchTrend` | 週別のOSBuild / Revision分布が返る |
+| `GetWindows11PatchLagCandidates` | 元のOSVersionが`10.0`でも、専用列の値からRevisionを取得できる |
+| `SendWeeklyWindows11PatchReportEmail` | 短いテストHTMLを`ReportHtml`へ渡し、Logic Appが正常終了して宛先へメールが届く |
+| エージェント全体 | HTMLレポートが生成・送信され、適用済み・判定不能が遅延Top 10に混在しない |
+
+対象データが存在しない場合は「該当なし」、取得に失敗した場合は「取得不可」と
+理由が表示されることを確認します。適用率・遅延率は判定可能端末がある場合に確認します。
+Logic Appの実行履歴、メール本文、観測日時の注意書きまで確認してから週次実行を有効化します。
+
+実行間隔は604,800秒（7日）です。毎週月曜日の特定時刻などを保証する設定ではありません。
+実際の次回実行予定はSecurity Copilotの画面で確認してください。
+
+## 更新と運用
+
+### マニフェスト・OpenAPIの更新
+
+1. 更新前に、代理ユーザー、プラグインの認証・Logic App設定、スケジュールを控える
+2. 公開テンプレートと関連ファイルを最新化する。Gitの場合は公開ファイルにローカル変更がないことを確認して`git pull --ff-only`を実行
+3. 新しいテンプレートから、同じTenant IDと別の出力ファイル名で再生成する
+
+   ```powershell
+   .\New-WeeklyWindows11PatchReportManifest.ps1 `
+     -TenantId '11111111-2222-3333-4444-555555555555' `
+     -OutputPath '.\WeeklyWindows11PatchReport.updated.local.yaml'
+   ```
+
+4. 生成した新しいファイルで、登録済みのプラグイン／エージェントを更新する
+5. 再登録が必要な場合は旧エージェントを停止し、重複実行・二重送信を避ける。認証とLogic App設定を再確認する
+6. 初回と同じ単独スキル・レポート確認を行い、週次実行を再開する
+
+既存の生成済みマニフェストは自動更新されません。スクリプトは既存ファイルを上書きしません。
+`-OutputPath`で指定した別名ファイルは、既定の`.gitignore`では除外されない場合があるため、
+公開GitHubへ追加しないでください。
+
+OpenAPIはGitHub rawを参照します。ローカルのOpenAPIだけを編集しても参照先は更新されません。
+公開側の更新後はプラグイン定義を再読み込みさせるために更新／再登録し、単独スキルで確認します。
+既に正常稼働している場合、READMEだけの更新でプラグインを再登録する必要はありません。
+
+### 定期的な確認
+
+- Security Copilot代理認証の有効期限と、Graph用Client Secretの有効期限を別々に管理する
+- Secret更新時はプラグインの認証設定を更新し、Graphスキルの疎通を確認する
+- Office 365接続の認証状態、Logic Appの実行失敗、メール到着を確認する
+- Defenderの判定不能率、古い観測、取得上限到達を監視する。センサー状態がActiveでも観測日時が新しいとは限らない
+- 判定不能を解消するために欠損値を0や最新版とみなしたり、不要なGraph書き込み権限を追加したりしない
 
 ## トラブルシューティング
 
@@ -322,7 +454,7 @@ Agent は 604,800 秒（7 日）ごとに実行されます。
 確定できません。Graph応答の`error.code`と`error.message`、実際に送信された
 クエリーパラメーターを確認します。アクセストークンやClient Secretは共有しないでください。
 
-本環境での直接診断により、クエリーなしの要求は200、`$top=12`を指定した要求は400で、
+直接診断では、クエリーなしの要求は200、上限を超えた`$top=12`の要求は400で、
 次のエラーメッセージが返ることを確認しました。
 
 ```text
@@ -333,12 +465,10 @@ The value from the incoming request is '12'.
 
 このエラーの原因は`$top`の上限超過です。認証や権限不足ではありません。
 OpenAPI 1.2では`$top`の既定値と最大値をともに5へ変更し、マニフェストと診断スクリプトも
-`$top=5`へ統一しています。前のフィルター簡素化だけでは、この上限超過は解消しませんでした。
+`$top=5`へ統一しています。認証設定やフィルターの変更では上限超過は解消しません。
 
-以前の要求では、品質更新の型判定に加えて
-`qualityUpdateClassification eq 'security'`の比較をサーバー側のフィルターに含めていました。
-最新のOpenAPIではこの比較を外し、公式例で使用される型判定とproductRevisions展開、
-公開日時の降順に限定しています。セキュリティ更新の選別は応答取得後に行います。
+確定した要求は次のとおりです。品質更新の型判定とproductRevisions展開、
+公開日時の降順を指定し、セキュリティ更新の選別は応答取得後に行います。
 
 | パラメーター | 値 |
 |---|---|
@@ -361,8 +491,8 @@ OpenAPIはGitHub raw URLから読み込まれるため、ローカルのOpenAPI�
 
 #### 400が継続する場合の直接診断
 
-前のフィルター簡素化で改善しない場合、フィルターが原因だったと断定できません。
-追加のクエリー変更や再登録を繰り返す前に、Security Copilotに設定したものと同じ
+`$top=5`でも400が継続する場合は、追加のクエリー変更や再登録を繰り返す前に、
+Security Copilotに設定したものと同じ
 専用Entraアプリを使用し、[診断スクリプト](./Test-WeeklyWindows11PatchReportGraph.ps1)で
 Graphの応答を確認します。PowerShell 7以降で、次のGUIDを実際の値に変更して実行します。
 
@@ -400,7 +530,7 @@ request IDだけを共有してください。Client SecretやAuthorizationヘ�
 ### `2002: Failed to load yaml: Value cannot be null. (Parameter 'uriString')`
 
 今回の環境では、`Authorization.TokenEndpoint`を省略したマニフェストで発生しました。
-前の手順で案内していた「TokenEndpointを削除して認証画面で入力」は使用しないでください。
+`TokenEndpoint`を削除して認証画面で後から入力する方式は使用しないでください。
 
 最新テンプレートと生成スクリプトを取得し、`-TenantId`を指定して生成した
 `WeeklyWindows11PatchReport.local.yaml`をアップロードします。
@@ -487,6 +617,22 @@ URLのホストが`login.microsoftonline.com`、パス末尾が`/oauth2/v2.0/tok
 - `WeeklyWindows11PatchReport_SampleEmail.html`
 - `WeeklyWindows11PatchReport_card.html`
 
+### 判定不能、または観測ビルドに`-1`が表示される
+
+旧マニフェストは`OSVersion`を4要素のバージョンとみなし、Revisionを抽出できない場合に
+`-1`を設定していました。`OSVersion=10.0`は、それだけで端末の収集異常を意味しません。
+`OsBuildRevision`に値が入っていれば、最新マニフェストで判定できます。
+
+1. 最新テンプレートからマニフェストを再生成し、プラグイン／エージェントを更新
+2. `GetWindows11PatchLagCandidates`を単独実行し、`OsBuildRevisionRaw`、`Revision`、
+   `RevisionSource`、`FullOSVersion`、`LastSeen`を確認
+3. `Unavailable`の場合は専用列と元のOSVersion、`Conflict`の場合は両者の不一致を確認
+4. `LastSeen`が古ければ、端末の起動・接続とDefenderセンサーの収集状態を確認
+5. Graph基準が不足する場合は取得範囲を確認する。取得できなかった版をサービス終了とみなさない
+
+`9711`などのRevision値を固定で埋め込んだり、欠損を0に置き換えたりしないでください。
+最新の判定処理で真に情報が不足する端末は判定不能として残し、遅延Top 10とは別に集計します。
+
 ## Defender KQL スキル
 
 | スキル | 期間 | 出力 |
@@ -506,9 +652,9 @@ Windows 11 最新レコードを対象にします。
 - Insider、LTSC、hotpatch は標準の一般提供チャネルと分けて確認してください。
 - Windows 11 のリリース情報ページは運用時の目視確認にも利用してください。
 
-> この生成環境では Defender Advanced Hunting のテナント ライブ スキーマ取得ツールを
-> 利用できなかったため、KQL は Microsoft Learn の最新 `DeviceInfo` スキーマを基準に
-> 検証しています。導入先で初回実行前に各 KQL を Advanced Hunting でテストしてください。
+> KQLは公式の`DeviceInfo`スキーマに基づきます。導入先では`OSVersion=10.0`と
+> `OsBuildRevision`の収集を確認していますが、列の提供状況やデータ鮮度は環境によって異なります。
+> 新しい環境への導入時には、各KQLの単独実行でデータを確認してください。
 
 ## 公式資料
 
