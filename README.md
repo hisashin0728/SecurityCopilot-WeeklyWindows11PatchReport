@@ -295,6 +295,19 @@ Agent は 604,800 秒（7 日）ごとに実行されます。
 確定できません。Graph応答の`error.code`と`error.message`、実際に送信された
 クエリーパラメーターを確認します。アクセストークンやClient Secretは共有しないでください。
 
+本環境での直接診断により、クエリーなしの要求は200、`$top=12`を指定した要求は400で、
+次のエラーメッセージが返ることを確認しました。
+
+```text
+The query specified in the URI is not valid.
+The limit of '5' for Top query has been exceeded.
+The value from the incoming request is '12'.
+```
+
+このエラーの原因は`$top`の上限超過です。認証や権限不足ではありません。
+OpenAPI 1.2では`$top`の既定値と最大値をともに5へ変更し、マニフェストと診断スクリプトも
+`$top=5`へ統一しています。前のフィルター簡素化だけでは、この上限超過は解消しませんでした。
+
 以前の要求では、品質更新の型判定に加えて
 `qualityUpdateClassification eq 'security'`の比較をサーバー側のフィルターに含めていました。
 最新のOpenAPIではこの比較を外し、公式例で使用される型判定とproductRevisions展開、
@@ -302,7 +315,7 @@ Agent は 604,800 秒（7 日）ごとに実行されます。
 
 | パラメーター | 値 |
 |---|---|
-| `$top` | `12` |
+| `$top` | `5`（最大5） |
 | `$filter` | `isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry')` |
 | `$expand` | `microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions` |
 | `$orderby` | `releaseDateTime desc` |

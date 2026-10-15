@@ -56,7 +56,7 @@ $tokenResponse = $null
 
 $baseUrl = 'https://graph.microsoft.com/beta/admin/windows/updates/catalog/entries'
 $query = [ordered]@{
-    '$top' = '12'
+    '$top' = '5'
     '$filter' = "isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry')"
     '$expand' = 'microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions'
     '$orderby' = 'releaseDateTime desc'

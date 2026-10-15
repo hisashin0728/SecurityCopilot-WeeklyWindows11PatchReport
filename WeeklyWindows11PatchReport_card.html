@@ -455,7 +455,7 @@
               displayName: "List Windows Quality Updates",
               description: "Microsoft Graph beta から品質更新カタログと Windows 11 product revisions を取得します。",
               inputs: [
-                { name: "$top", description: "取得件数", required: false, defaultValue: "12" },
+                { name: "$top", description: "取得件数（Graph の上限は 5）", required: false, defaultValue: "5" },
                 { name: "$filter", description: "品質更新の型だけで絞り込み。security 分類は応答取得後に選別", required: false, defaultValue: "isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry')" },
                 { name: "$expand", description: "productRevisions の OData 展開", required: false, defaultValue: "microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions" },
                 { name: "$orderby", description: "公開日時の並び順", required: false, defaultValue: "releaseDateTime desc" }

@@ -7,7 +7,7 @@ info:
     published security quality-update build for each Windows 11 feature version.
     Requires the Microsoft Graph application permission WindowsUpdates.Read.All.
     This API uses the Microsoft Graph beta endpoint and is subject to change.
-  version: "1.1"
+  version: "1.2"
 servers:
   - url: https://graph.microsoft.com/beta
 paths:
@@ -28,10 +28,10 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 100
-            default: 12
+            maximum: 5
+            default: 5
           required: false
-          description: Maximum number of update catalog entries to return.
+          description: Number of update catalog entries to return. Graph limits $top to 5; never request more than 5.
         - in: query
           name: $filter
           schema:

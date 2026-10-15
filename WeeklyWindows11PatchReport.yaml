@@ -84,7 +84,7 @@ SkillGroups:
 
             # Phase 1: 最新パッチ配信基準
             1. ListWindowsQualityUpdates を次の値で 1 回呼び出す。
-               - $top: 12
+               - $top: 5
                - $filter:
                  `isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry')`
                - $expand:
@@ -92,6 +92,7 @@ SkillGroups:
                - $orderby: `releaseDateTime desc`
                パラメーターには値だけを渡す。`$filter=` などの名前、バッククォート、
                URL エンコード済み文字列を値に含めない。分類条件を $filter に追加しない。
+               Graph の $top 上限は 5。5 を超える値は指定しない。
             2. 応答から qualityUpdateClassification が `security` の項目だけを選ぶ。
                分類がない項目を security と推測しない。
                月例セキュリティ更新（qualityUpdateCadence が monthly）を優先し、
