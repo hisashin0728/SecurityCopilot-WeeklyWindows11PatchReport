@@ -223,7 +223,7 @@ SkillGroups:
 
   - Format: API
     Settings:
-      OpenApiSpecUrl: <YOUR-OPENAPI-SPEC-URL>/WeeklyWindows11PatchReport_GraphAPI_openapi.yaml
+      OpenApiSpecUrl: https://raw.githubusercontent.com/hisashin0728/SecurityCopilot-WeeklyWindows11PatchReport/refs/heads/main/WeeklyWindows11PatchReport_GraphAPI_openapi.yaml
 
   - Format: LogicApp
     Skills:

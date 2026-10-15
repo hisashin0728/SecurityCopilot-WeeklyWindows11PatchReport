@@ -46,7 +46,7 @@ Security Copilot Standard Agent です。
 2. Defender for Endpoint に端末がオンボード済み
 3. Graph アプリケーション権限 `WindowsUpdates.Read.All` に管理者同意済み
 4. メール送信用 Logic App と Office 365 接続が利用可能
-5. OpenAPI ファイルを GitHub raw または Azure Blob などの HTTPS 公開 URL に配置
+5. Security Copilot から GitHub raw の OpenAPI URL へ HTTPS アクセス可能
 
 Microsoft Graph `/beta` API は変更される可能性があり、本番利用は Microsoft のサポート対象外です。
 運用前と Graph API 変更時に OpenAPI 応答スキーマを再確認してください。
@@ -55,23 +55,34 @@ Microsoft Graph `/beta` API は変更される可能性があり、本番利用�
 
 ### 1. Logic App
 
-```powershell
-az deployment group create `
-  --resource-group <RESOURCE-GROUP> `
-  --template-file .\WeeklyWindows11PatchReport_LogicApp_ARM.json `
-  --parameters emailAddress="recipient@contoso.com"
-```
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fhisashin0728%2FSecurityCopilot-WeeklyWindows11PatchReport%2Frefs%2Fheads%2Fmain%2FWeeklyWindows11PatchReport_LogicApp_ARM.json)
 
-デプロイ後、Azure ポータルで Office 365 接続を認証します。
+上の **Deploy to Azure** ボタンを選択し、Azure ポータルで次を指定してデプロイします。
+
+1. サブスクリプション
+2. リソース グループ
+3. リージョン
+4. 送信先メールアドレス
+5. Logic App 名（既定値: `PluginLogicApp_WeeklyWindows11PatchReport`）
+
+デプロイ後、Azure ポータルで作成された Office 365 API 接続を開き、
+送信に使用するアカウントで認証してください。ARM テンプレートのデプロイだけでは
+Office 365 接続のサインインは完了しません。
+
+ボタンが利用できない場合は、
+[Azure ポータルでカスタム テンプレートを開く](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fhisashin0728%2FSecurityCopilot-WeeklyWindows11PatchReport%2Frefs%2Fheads%2Fmain%2FWeeklyWindows11PatchReport_LogicApp_ARM.json)
+リンクを直接使用してください。
 
 ### 2. OpenAPI
 
-`WeeklyWindows11PatchReport_GraphAPI_openapi.yaml` を HTTPS で公開し、
-`WeeklyWindows11PatchReport.yaml` の次の値を置換します。
+マニフェストには、GitHub raw の公開済み OpenAPI URL が設定されています。
 
 ```yaml
-OpenApiSpecUrl: <YOUR-OPENAPI-SPEC-URL>/WeeklyWindows11PatchReport_GraphAPI_openapi.yaml
+OpenApiSpecUrl: https://raw.githubusercontent.com/hisashin0728/SecurityCopilot-WeeklyWindows11PatchReport/refs/heads/main/WeeklyWindows11PatchReport_GraphAPI_openapi.yaml
 ```
+
+通常は書き換え不要です。リポジトリを fork して内容を変更する場合だけ、
+fork 先の raw URL に変更してください。
 
 ### 3. Security Copilot
 
