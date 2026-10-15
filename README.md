@@ -18,13 +18,40 @@ Security Copilot Standard Agent です。
 
 | 状態 | 判定 |
 |---|---|
-| 適用済み | Defender の完全な OS バージョンが同じ feature version の Graph 最新基準以上 |
+| 適用済み | 同じ feature version / buildNumber の Defender Revision が Graph 最新基準以上 |
 | 遅延 | 同じ buildNumber で update build revision が最新基準未満 |
 | 機能更新遅延 | サービス終了版、または最新基準に対応しない旧 feature version |
-| 判定不能 | Graph 基準、feature version、または完全な端末バージョンが不足 |
+| 判定不能 | Graph 基準、対応build、Revisionが不足、またはRevisionの情報が不整合 |
 
 `適用率 = 適用済み / 判定可能端末`、`遅延率 = 遅延端末 / 判定可能端末`
 として算出します。判定不能端末は分母から除外し、別のデータ品質指標として表示します。
+判定不能・適用済み端末は「パッチ適用遅延端末 Top 10」に含めません。
+
+### OS Revisionの取得方法
+
+`DeviceInfo.OSVersion`が`10.0`だけでも、`OSBuild`と`OsBuildRevision`で判定できます。
+例えば`OSVersion=10.0`、`OSBuild=26200`、`OsBuildRevision=9711`は
+`FullOSVersion=10.0.26200.9711`として表示します。
+
+| RevisionSource | 意味 |
+|---|---|
+| `OsBuildRevision` | 専用列の有効な非負整数を優先して使用 |
+| `OSVersion` | 専用列から取得できない場合に、完全な4要素のOSVersionから抽出 |
+| `Unavailable` | どちらからも取得できない。Revisionはnull |
+| `Conflict` | 専用列とOSVersionのRevision、またはOSVersionのbuildとOSBuildが不一致。判定不能 |
+
+3つのKQLスキルで同じ抽出・検証処理を使用します。最新レコードの専用列が空だからといって
+過去の別レコードからRevisionを補いません。トレンドはその週の最新レコードを使用します。
+欠損時に`-1`を設定する旧処理は廃止し、未取得を実際のOSバージョンとして表示しません。
+OSVersionやOsBuildRevisionの元の値も、診断用に返します。
+
+同じ`DeviceInfo`を使うため、この修正に追加のGraph権限やTVM権限は必要ありません。
+最新のマニフェストを再登録または更新し、KQLの3スキルを単独実行してから
+エージェントの集計・レポートを確認してください。
+
+Revision番号差は未適用パッチ件数や月例更新の未適用月数ではありません。
+判定は観測時点のビルドと現在の目標との比較です。基準公開前の観測や7日超の古い観測は
+鮮度注意を付け、現在の端末状態として断定しません。
 
 > Graph カタログの「配信済み」は Microsoft が更新を公開済みであることを示します。
 > Intune / Windows Update for Business の割り当て成功やダウンロード成功を直接示すものでは
@@ -464,9 +491,9 @@ URLのホストが`login.microsoftonline.com`、パス末尾が`/oauth2/v2.0/tok
 
 | スキル | 期間 | 出力 |
 |---|---:|---|
-| `GetWindows11PatchInventory` | 14 日 | OSVersionInfo / OSBuild / OSVersion 別台数 |
-| `GetWindows11PatchTrend` | 28 日 | 週別 OS ビルド分布 |
-| `GetWindows11PatchLagCandidates` | 14 日 | 古いビルド順の候補端末 50 台 |
+| `GetWindows11PatchInventory` | 14 日 | feature version / OSBuild / Revision / RevisionSource 別台数、元データ、FullOSVersion、観測日時範囲 |
+| `GetWindows11PatchTrend` | 28 日 | 週別 OSBuild / Revision 分布、元データ、RevisionSource、FullOSVersion |
+| `GetWindows11PatchLagCandidates` | 14 日 | Revision取得済みを優先した古いビルド順の候補端末 50 台。Graph比較前のため適用済みも含み得る |
 
 クエリは `MergedToDeviceId` が空、`OnboardingStatus == Onboarded` の
 Windows 11 最新レコードを対象にします。
@@ -474,7 +501,8 @@ Windows 11 最新レコードを対象にします。
 ## データ品質上の注意
 
 - 14 日間 Defender に接続していない端末は母数に含まれません。
-- `OSVersion` が `major.minor.build.revision` 形式でない端末は判定不能になり得ます。
+- `OsBuildRevision`と完全な`OSVersion`の両方からRevisionを取得できない端末、値が不一致の端末は判定不能になります。
+- 集計100行・トレンド400行・候補50台に達した場合は取得上限による欠落の可能性を表示し、全社網羅を保証しません。
 - Insider、LTSC、hotpatch は標準の一般提供チャネルと分けて確認してください。
 - Windows 11 のリリース情報ページは運用時の目視確認にも利用してください。
 

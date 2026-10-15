@@ -430,19 +430,19 @@
             {
               name: "GetWindows11PatchInventory",
               displayName: "Get Windows 11 Patch Inventory",
-              description: "Defender DeviceInfo の直近状態から Windows 11 の OS バージョン別端末数を集計します。",
+              description: "Defender DeviceInfo の OsBuildRevision を優先し、OSBuild / Revision 別台数と FullOSVersion を集計します。",
               inputs: []
             },
             {
               name: "GetWindows11PatchTrend",
               displayName: "Get Windows 11 Patch Trend",
-              description: "過去 28 日を 7 日単位で集計し、Windows 11 の OS ビルド分布推移を返します。",
+              description: "過去 28 日を週単位で集計し、OsBuildRevision を使用した OSBuild / Revision 分布推移を返します。",
               inputs: []
             },
             {
               name: "GetWindows11PatchLagCandidates",
               displayName: "Get Windows 11 Patch Lag Candidates",
-              description: "古い OS ビルド順に Top 10 選定用の候補端末を最大 50 台返します。",
+              description: "Revision 取得済みを優先して候補端末を最大 50 台返します。Graph 比較後、判定不能・適用済みを遅延 Top 10 から除外します。",
               inputs: []
             }
           ]

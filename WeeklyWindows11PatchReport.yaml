@@ -107,7 +107,7 @@ SkillGroups:
 
             # Phase 2: Defender の適用結果
             5. GetWindows11PatchInventory を呼び出し、直近 14 日に Defender が観測した
-               Windows 11 端末の OSVersionInfo / OSBuild / OSVersion 別台数を取得する。
+               Windows 11 端末の feature version / OSBuild / Revision 別台数を取得する。
             6. GetWindows11PatchTrend を呼び出し、過去 28 日の週次ビルド分布を取得する。
             7. GetWindows11PatchLagCandidates を呼び出し、古いビルド順の候補端末を取得する。
 
@@ -116,19 +116,35 @@ SkillGroups:
                OSVersionInfo に 23H2 / 24H2 / 25H2 / 26H1 / 26H2 などが含まれる場合はそれを使う。
                含まれない場合は Graph productRevision.osBuild の buildNumber と
                Defender OSBuild を対応付ける。対応付け不能な端末は「判定不能」とする。
-            9. Defender OSVersion の `major.minor.build.revision` を数値として比較する。
-               - 適用済み: 端末 build と revision が配信基準以上
+            9. KQL が返す OSBuild と Revision を Graph の buildNumber と
+               updateBuildRevision に数値として照合する。表示には FullOSVersion を使う。
+               RevisionSource は OsBuildRevision 優先、完全な OSVersion の抽出値が代替。
+               OSVersion が `10.0` でも、OSBuild と Revision があれば判定できる。
+               KQL の Revision を再抽出・推測しない。Conflict / Unavailable は判定不能。
+               - 適用済み: 同じ buildNumber で端末 revision が配信基準以上
                - 遅延: 同じ buildNumber で端末 revision が配信基準未満
                - 機能更新遅延: 端末の feature version がサービス終了、または基準対象外の旧版
-               - 判定不能: Graph 基準または端末の完全なバージョンが不足
+               - 判定不能: Graph 基準、対応 build、Revision が不足、またはデータが不整合
+               異なる buildNumber を大小だけで判定しない。Graph 基準の欠落だけで
+               サービス終了とみなさない。観測日時を明記し、基準公開前の観測や
+               7 日超の古い観測は鮮度注意を付け、現在の端末状態として断定しない。
+               FullOSVersion が空でも Revision があれば OSBuild.Revision を表示する。
+               Revision が null のときだけ OSBuild と「Revision 未取得」を表示する。
+               `-1` を実際の Revision として表示しない。
             10. 適用率 = 適用済み台数 / 判定可能台数 × 100。
                 遅延率 = (遅延 + 機能更新遅延) / 判定可能台数 × 100。
                 分母に判定不能を含めない。判定不能率は別に示す。
             11. 「配信済み」は Graph カタログ上で公開済みの基準を意味し、
                 Intune/WUfB の割り当て成功を意味しないことを明記する。
                 「適用済み」は Defender が直近 14 日に観測した OS ビルドによる判定である。
-            12. 遅延候補から、まず機能更新遅延、次に不足 revision 数、最後に LastSeen の古さで
+            12. 候補を Graph 基準と比較してから、遅延または確認済みの機能更新遅延だけを選ぶ。
+                適用済み・判定不能端末を遅延 Top 10 に混ぜない。
+                まず機能更新遅延、次に Revision 番号差、最後に LastSeen の古さで
                 並べ、Top 10 を確定する。候補の全件を HTML に出力しない。
+                判定不能は集計スキルの台数と原因別内訳をデータ品質欄に別記する。
+                Revision 番号差は未適用パッチ件数や未適用月数ではない。
+                集計が 100 行、トレンドが 400 行、候補が 50 台に達した場合は、
+                取得上限による欠落の可能性を明記し、全社網羅を保証しない。
 
             # Phase 4: HTML/CSS レポート
             13. 次のセクションを必ず表示する。
@@ -142,12 +158,12 @@ SkillGroups:
                 8) データ品質と判定上の注意
             14. Top 10 テーブル列:
                 順位、端末名、feature version、観測ビルド、目標ビルド、
-                不足 revision、最終観測、状態、推奨アクション。
+                Revision 番号差、最終観測、状態、推奨アクション。
             15. 推奨アクションは事実に基づき、次を優先する。
                 - サービス終了版: 機能更新リングと互換性を確認してサポート版へ更新
-                - 2 回以上の月例更新相当の遅延: 更新リング、期限、セーフガード ホールドを確認
+                - Revision が目標未満: 更新リング、期限、再起動、セーフガード ホールドを確認
                 - LastSeen が 7 日超: 端末稼働、MDE センサー、ネットワーク接続を確認
-                - 判定不能: DeviceInfo の OSVersion / OSVersionInfo 収集状態を確認
+                - 判定不能: OsBuildRevisionRaw / OSVersion / RevisionSource と Graph 基準を確認
 
             # HTML 制約
             - `<!DOCTYPE html>` から始まる完全な HTML を作る。
@@ -178,18 +194,30 @@ SkillGroups:
         DisplayName: Get Windows 11 Patch Inventory
         Description: >-
           Defender DeviceInfo の直近状態を使用し、Windows 11 の OS バージョン別端末数を
-          集計します。最新品質更新との比較に必要な完全な OSVersion も返します。
+          集計します。OsBuildRevision を優先した Revision と FullOSVersion も返します。
         Settings:
           Target: Defender
           Template: |-
             DeviceInfo
             | where Timestamp > ago(14d)
             | where OSPlatform =~ "Windows11"
-            | summarize arg_max(Timestamp, OSBuild, OSVersion, OSVersionInfo, OnboardingStatus, MergedToDeviceId) by DeviceId
+            | extend OsBuildRevisionRaw = tostring(column_ifexists("OsBuildRevision", ""))
+            | summarize arg_max(Timestamp, OSBuild, OSVersion, OSVersionInfo, OsBuildRevisionRaw, OnboardingStatus, MergedToDeviceId) by DeviceId
             | where isempty(MergedToDeviceId)
             | where OnboardingStatus =~ "Onboarded"
-            | summarize DeviceCount = dcount(DeviceId) by OSVersionInfo, OSBuild, OSVersion
-            | sort by OSBuild desc, OSVersion desc
+            | extend DedicatedRevision = tolong(extract(@"^\s*(\d+)\s*$", 1, OsBuildRevisionRaw)),
+                     VersionRevision = tolong(extract(@"^\d+\.\d+\.\d+\.(\d+)$", 1, OSVersion)),
+                     VersionBuild = tolong(extract(@"^\d+\.\d+\.(\d+)(?:\.\d+)?$", 1, OSVersion)),
+                     MajorMinor = extract(@"^(\d+\.\d+)(?:\.\d+){0,2}$", 1, OSVersion)
+            | extend RevisionConflict = (isnotnull(DedicatedRevision) and isnotnull(VersionRevision) and DedicatedRevision != VersionRevision)
+                     or (isnotnull(VersionBuild) and VersionBuild != OSBuild)
+            | extend Revision = iff(RevisionConflict, long(null), coalesce(DedicatedRevision, VersionRevision)),
+                     RevisionSource = case(RevisionConflict, "Conflict", isnotnull(DedicatedRevision), "OsBuildRevision", isnotnull(VersionRevision), "OSVersion", "Unavailable")
+            | extend FullOSVersion = iff(isnotnull(Revision) and isnotempty(MajorMinor) and isnotnull(OSBuild),
+                     strcat(MajorMinor, ".", tostring(OSBuild), ".", tostring(Revision)), "")
+            | summarize DeviceCount = count(), OldestLastSeen = min(Timestamp), NewestLastSeen = max(Timestamp)
+                     by OSVersionInfo, OSBuild, OSVersion, OsBuildRevisionRaw, Revision, RevisionSource, FullOSVersion
+            | sort by OSBuild desc, Revision desc
             | take 100
 
       - Name: GetWindows11PatchTrend
@@ -202,12 +230,23 @@ SkillGroups:
             DeviceInfo
             | where Timestamp > ago(28d)
             | where OSPlatform =~ "Windows11"
+            | extend OsBuildRevisionRaw = tostring(column_ifexists("OsBuildRevision", ""))
             | extend WeekStart = startofweek(Timestamp)
-            | summarize arg_max(Timestamp, OSBuild, OSVersion, OSVersionInfo, OnboardingStatus, MergedToDeviceId) by WeekStart, DeviceId
+            | summarize arg_max(Timestamp, OSBuild, OSVersion, OSVersionInfo, OsBuildRevisionRaw, OnboardingStatus, MergedToDeviceId) by WeekStart, DeviceId
             | where isempty(MergedToDeviceId)
             | where OnboardingStatus =~ "Onboarded"
-            | summarize DeviceCount = dcount(DeviceId) by WeekStart, OSVersionInfo, OSBuild, OSVersion
-            | sort by WeekStart asc, OSBuild desc, OSVersion desc
+            | extend DedicatedRevision = tolong(extract(@"^\s*(\d+)\s*$", 1, OsBuildRevisionRaw)),
+                     VersionRevision = tolong(extract(@"^\d+\.\d+\.\d+\.(\d+)$", 1, OSVersion)),
+                     VersionBuild = tolong(extract(@"^\d+\.\d+\.(\d+)(?:\.\d+)?$", 1, OSVersion)),
+                     MajorMinor = extract(@"^(\d+\.\d+)(?:\.\d+){0,2}$", 1, OSVersion)
+            | extend RevisionConflict = (isnotnull(DedicatedRevision) and isnotnull(VersionRevision) and DedicatedRevision != VersionRevision)
+                     or (isnotnull(VersionBuild) and VersionBuild != OSBuild)
+            | extend Revision = iff(RevisionConflict, long(null), coalesce(DedicatedRevision, VersionRevision)),
+                     RevisionSource = case(RevisionConflict, "Conflict", isnotnull(DedicatedRevision), "OsBuildRevision", isnotnull(VersionRevision), "OSVersion", "Unavailable")
+            | extend FullOSVersion = iff(isnotnull(Revision) and isnotempty(MajorMinor) and isnotnull(OSBuild),
+                     strcat(MajorMinor, ".", tostring(OSBuild), ".", tostring(Revision)), "")
+            | summarize DeviceCount = count() by WeekStart, OSVersionInfo, OSBuild, OSVersion, OsBuildRevisionRaw, Revision, RevisionSource, FullOSVersion
+            | sort by WeekStart asc, OSBuild desc, Revision desc
             | take 400
 
       - Name: GetWindows11PatchLagCandidates
@@ -221,13 +260,23 @@ SkillGroups:
             DeviceInfo
             | where Timestamp > ago(14d)
             | where OSPlatform =~ "Windows11"
-            | summarize arg_max(Timestamp, DeviceName, OSBuild, OSVersion, OSVersionInfo, OnboardingStatus, MachineGroup, MergedToDeviceId) by DeviceId
+            | extend OsBuildRevisionRaw = tostring(column_ifexists("OsBuildRevision", ""))
+            | summarize arg_max(Timestamp, DeviceName, OSBuild, OSVersion, OSVersionInfo, OsBuildRevisionRaw, OnboardingStatus, MachineGroup, MergedToDeviceId) by DeviceId
             | where isempty(MergedToDeviceId)
             | where OnboardingStatus =~ "Onboarded"
-            | extend Revision = tolong(extract(@"^\d+\.\d+\.\d+\.(\d+)$", 1, OSVersion))
-            | extend Revision = coalesce(Revision, long(-1))
-            | sort by OSBuild asc, Revision asc, Timestamp asc
-            | project DeviceId, DeviceName, OSVersionInfo, OSBuild, OSVersion, Revision, LastSeen = Timestamp, MachineGroup
+            | extend DedicatedRevision = tolong(extract(@"^\s*(\d+)\s*$", 1, OsBuildRevisionRaw)),
+                     VersionRevision = tolong(extract(@"^\d+\.\d+\.\d+\.(\d+)$", 1, OSVersion)),
+                     VersionBuild = tolong(extract(@"^\d+\.\d+\.(\d+)(?:\.\d+)?$", 1, OSVersion)),
+                     MajorMinor = extract(@"^(\d+\.\d+)(?:\.\d+){0,2}$", 1, OSVersion)
+            | extend RevisionConflict = (isnotnull(DedicatedRevision) and isnotnull(VersionRevision) and DedicatedRevision != VersionRevision)
+                     or (isnotnull(VersionBuild) and VersionBuild != OSBuild)
+            | extend Revision = iff(RevisionConflict, long(null), coalesce(DedicatedRevision, VersionRevision)),
+                     RevisionSource = case(RevisionConflict, "Conflict", isnotnull(DedicatedRevision), "OsBuildRevision", isnotnull(VersionRevision), "OSVersion", "Unavailable")
+            | extend FullOSVersion = iff(isnotnull(Revision) and isnotempty(MajorMinor) and isnotnull(OSBuild),
+                     strcat(MajorMinor, ".", tostring(OSBuild), ".", tostring(Revision)), "")
+            | extend HasRevision = isnotnull(Revision)
+            | sort by HasRevision desc, OSBuild asc, Revision asc, Timestamp asc
+            | project DeviceId, DeviceName, OSVersionInfo, OSBuild, OSVersion, OsBuildRevisionRaw, Revision, RevisionSource, FullOSVersion, LastSeen = Timestamp, MachineGroup
             | take 50
 
   - Format: API
