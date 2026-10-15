@@ -275,6 +275,56 @@ Security CopilotのMicrosoft管理ファーストパーティ アプリから、
 4. エージェントの代理ユーザー認証も再設定
 5. `ListWindowsQualityUpdates` を再実行
 
+### `Unexpected character encountered while parsing value: <`
+
+```text
+Newtonsoft.Json.JsonReaderException:
+Unexpected character encountered while parsing value: <
+OAuthClientCredentialFlowAuthHandler.GetHttpAuthorizationHeaderAsync
+```
+
+Security CopilotがOAuthトークンエンドポイントの応答をJSONとして解析しようとしましたが、
+応答の先頭が`<`、つまりHTMLだった場合に発生します。クライアントIDやGraph権限ではなく、
+TokenEndpointのURL誤りで発生することが多いエラーです。
+
+本リポジトリの公開マニフェストには、テナント固有値を公開しないため次のプレースホルダーがあります。
+
+```yaml
+TokenEndpoint: https://login.microsoftonline.com/<YOUR-TENANT-ID>/oauth2/v2.0/token
+```
+
+アップロード前に、`<YOUR-TENANT-ID>`全体を実際のDirectory (tenant) IDへ置換してください。
+山括弧`<`と`>`も残さないでください。
+
+正しい例:
+
+```yaml
+TokenEndpoint: https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/oauth2/v2.0/token
+```
+
+誤った例:
+
+```yaml
+TokenEndpoint: https://login.microsoftonline.com/<YOUR-TENANT-ID>/oauth2/v2.0/token
+TokenEndpoint: https://login.microsoftonline.com/<11111111-2222-3333-4444-555555555555>/oauth2/v2.0/token
+TokenEndpoint: https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/oauth2/v2.0/authorize
+```
+
+確認と復旧:
+
+1. Entra管理センターの「概要」でDirectory (tenant) IDをコピー
+2. ローカルの`WeeklyWindows11PatchReport.yaml`を開く
+3. `<YOUR-TENANT-ID>`を実際のTenant IDへ置換し、山括弧がないことを確認
+4. 既存のSecurity Copilotプラグイン／エージェントを削除または更新
+5. 編集済みマニフェストを再アップロード
+6. OAuth設定へClientId、ClientSecretの**値**、Resource=`https://graph.microsoft.com`を入力
+7. 再実行
+
+それでも同じエラーになる場合は、TokenEndpointをブラウザーで開いてHTMLが表示されるかではなく、
+URLのホストが`login.microsoftonline.com`、パス末尾が`/oauth2/v2.0/token`であることを確認します。
+プロキシやSSLインスペクションがMicrosoftログインURLの代わりにHTMLのブロックページを返す場合も、
+同じエラーになります。
+
 ### `No SkillsetDescriptor is specified`
 
 原因は、OpenAPI 仕様ファイルまたは ARM テンプレートを Security Copilot の
