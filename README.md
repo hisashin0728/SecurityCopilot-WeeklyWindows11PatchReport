@@ -34,11 +34,17 @@ Security Copilot Standard Agent です。
 
 | ファイル | 用途 |
 |---|---|
-| `WeeklyWindows11PatchReport.yaml` | Agent、KQL、Graph API、Logic App スキル |
-| `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml` | Graph beta API の OpenAPI 3.0 仕様 |
+| `WeeklyWindows11PatchReport.yaml` | **Security Copilot にアップロードするプラグイン マニフェスト**。Agent、KQL、Graph API、Logic App スキルを定義 |
+| `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml` | Graph beta API の OpenAPI 3.0 仕様。マニフェストから HTTPS で参照するファイルであり、Security Copilot へ直接アップロードしない |
 | `WeeklyWindows11PatchReport_LogicApp_ARM.json` | Office 365 メール送信用 Logic App |
 | `WeeklyWindows11PatchReport_SampleEmail.html` | 架空データによるレポート表示例 |
 | `WeeklyWindows11PatchReport_card.html` | プラグイン カード |
+
+> **重要:** Security Copilot の「カスタム プラグインの追加」で選択するファイルは
+> `WeeklyWindows11PatchReport.yaml` です。
+> `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml` を直接選択すると、このファイルには
+> Security Copilot の `Descriptor` がないため、
+> `2002: Failed to load yaml: No SkillsetDescriptor is specified` が発生します。
 
 ## 前提条件
 
@@ -84,14 +90,39 @@ OpenApiSpecUrl: https://raw.githubusercontent.com/hisashin0728/SecurityCopilot-W
 通常は書き換え不要です。リポジトリを fork して内容を変更する場合だけ、
 fork 先の raw URL に変更してください。
 
+OpenAPI ファイル単体は Security Copilot のプラグイン マニフェストではありません。
+Security Copilot は `WeeklyWindows11PatchReport.yaml` の `OpenApiSpecUrl` を読み取り、
+実行時にこの OpenAPI ファイルを HTTPS で取得します。
+
 ### 3. Security Copilot
 
-1. `WeeklyWindows11PatchReport.yaml` をカスタム プラグインとしてアップロード
+1. `WeeklyWindows11PatchReport.yaml` だけをカスタム プラグインとしてアップロード
 2. Graph 認証を構成し、`WindowsUpdates.Read.All` を付与
 3. Logic App の Subscription ID、Resource Group、Workflow Name を設定
 4. Agent を有効化
 
 Agent は 604,800 秒（7 日）ごとに実行されます。
+
+## トラブルシューティング
+
+### `No SkillsetDescriptor is specified`
+
+原因は、OpenAPI 仕様ファイルまたは ARM テンプレートを Security Copilot の
+プラグイン マニフェストとしてアップロードしたことです。
+
+1. エラー画面で戻る
+2. 「カスタム プラグインの追加」を再実行
+3. リポジトリの
+   [`WeeklyWindows11PatchReport.yaml`](https://raw.githubusercontent.com/hisashin0728/SecurityCopilot-WeeklyWindows11PatchReport/refs/heads/main/WeeklyWindows11PatchReport.yaml)
+   を選択
+4. OpenAPI URL が自動的に読み込まれることを確認
+
+アップロード対象ではないファイル:
+
+- `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml`
+- `WeeklyWindows11PatchReport_LogicApp_ARM.json`
+- `WeeklyWindows11PatchReport_SampleEmail.html`
+- `WeeklyWindows11PatchReport_card.html`
 
 ## Defender KQL スキル
 
