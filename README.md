@@ -36,6 +36,7 @@ Security Copilot Standard Agent です。
 |---|---|
 | `WeeklyWindows11PatchReport.yaml` | プラグイン マニフェストの公開テンプレート。Agent、KQL、Graph API、Logic App スキルを定義。直接アップロードしない |
 | `New-WeeklyWindows11PatchReportManifest.ps1` | `-TenantId`からアップロード用マニフェストを生成 |
+| `Test-WeeklyWindows11PatchReportGraph.ps1` | 同じサービスプリンシパルでGraphへ直接要求し、400のエラー本文を切り分け。PowerShell 7以降が必要 |
 | `WeeklyWindows11PatchReport.local.yaml` | **Security Copilot にアップロードする生成済みマニフェスト**。ローカルで生成し、公開GitHubには保存しない |
 | `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml` | Graph beta API の OpenAPI 3.0 仕様。マニフェストから HTTPS で参照するファイルであり、Security Copilot へ直接アップロードしない |
 | `WeeklyWindows11PatchReport_LogicApp_ARM.json` | Office 365 メール送信用 Logic App |
@@ -318,6 +319,44 @@ OpenAPIはGitHub raw URLから読み込まれるため、ローカルのOpenAPI�
 実際のクエリーパラメーターを確認し、原因を切り分けます。読み取り要求の400を理由に
 `WindowsUpdates.ReadWrite.All`へ権限を拡大しないでください。
 
+#### 400が継続する場合の直接診断
+
+前のフィルター簡素化で改善しない場合、フィルターが原因だったと断定できません。
+追加のクエリー変更や再登録を繰り返す前に、Security Copilotに設定したものと同じ
+専用Entraアプリを使用し、[診断スクリプト](./Test-WeeklyWindows11PatchReportGraph.ps1)で
+Graphの応答を確認します。PowerShell 7以降で、次のGUIDを実際の値に変更して実行します。
+
+```powershell
+.\Test-WeeklyWindows11PatchReportGraph.ps1 `
+  -TenantId '11111111-2222-3333-4444-555555555555' `
+  -ClientId 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+```
+
+Client Secretの**値**は、実行時の非表示入力へ入力してください。コマンドライン引数、
+ファイル、チャットに記載しないでください。スクリプトはアクセストークンを表示せず、
+レポートの送信や更新の変更も行いません。
+
+| テスト | 要求 |
+|---|---|
+| 1 | クエリーパラメーターなし |
+| 2 | `$top`のみ |
+| 3 | `$top` + `$filter` |
+| 4 | `$top` + `$filter` + `$expand` |
+| 5 | 現在のエージェントと同じ全パラメーター |
+
+400の場合は`error.code`、`error.message`、要求URL、request IDを表示して次のケースへ
+進みます。400以外のエラーや認証失敗では停止します。失敗したケースがある場合は、
+最後にもエラーを返します。HTMLなどの非JSON応答は本文を表示せず、Content-Typeを表示します。
+
+- 1から400: OData条件だけでは説明できません。Graphのエラー本文に基づいて調査します。
+- ある段階から400: その段階で追加したパラメーターが切り分け対象になります。
+- 全件200でCopilotだけ400: Copilotの実際のスキル入力、読み込まれたOpenAPI、
+  クエリーのシリアライズ、認証設定の差を確認します。直接診断の成功だけでCopilotの成功とはみなしません。
+- 401/403: 認証・権限・管理者同意を調べます。400と分けて扱います。
+
+診断結果を共有する場合は、ケース名、HTTP状態、`error.code`、`error.message`、
+request IDだけを共有してください。Client SecretやAuthorizationヘッダーは共有しないでください。
+
 ### `2002: Failed to load yaml: Value cannot be null. (Parameter 'uriString')`
 
 今回の環境では、`Authorization.TokenEndpoint`を省略したマニフェストで発生しました。
@@ -402,6 +441,7 @@ URLのホストが`login.microsoftonline.com`、パス末尾が`/oauth2/v2.0/tok
 
 - `WeeklyWindows11PatchReport.yaml`（未生成の公開テンプレート）
 - `New-WeeklyWindows11PatchReportManifest.ps1`
+- `Test-WeeklyWindows11PatchReportGraph.ps1`
 - `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml`
 - `WeeklyWindows11PatchReport_LogicApp_ARM.json`
 - `WeeklyWindows11PatchReport_SampleEmail.html`
