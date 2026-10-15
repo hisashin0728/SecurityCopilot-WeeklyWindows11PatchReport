@@ -4,6 +4,19 @@ Microsoft Graph Windows Updates カタログの最新品質更新と、Microsoft
 `DeviceInfo` の Windows 11 OS ビルドを週次で突合し、HTML メールを送信する
 Security Copilot Standard Agent です。
 
+## 実際の生成例
+
+本エージェントで生成したHTMLレポートの表示例です。画像内の更新情報・端末・集計値は
+生成時点のものであり、実行日時や対象環境によって変わります。
+
+### サマリー・配信基準・適用状況
+
+![Windows 11パッチ週次レポートのサマリー、最新パッチ配信基準、適用状況](./images/sample1.png)
+
+### 適用トレンド・遅延端末Top 10・推奨アクション
+
+![Windows 11パッチ週次レポートの4週間トレンド、遅延端末Top 10、推奨アクション](./images/Sample2.png)
+
 ## 確定構成
 
 2026-10-15時点の導入手順です。導入先でエージェントの実行とレポート生成を確認し、
