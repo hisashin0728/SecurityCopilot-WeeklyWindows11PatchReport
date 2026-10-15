@@ -135,7 +135,17 @@ Authorization:
 
 #### Security Copilotのセットアップ画面で入力する値
 
-セットアップ画面に表示される次の3項目を入力します。
+`Resource` はこのプラグインでは常にMicrosoft Graphを指す固定値です。
+ただし、現在のSecurity Copilotでは `OAuthClientCredentialsFlow` の認証セットアップ時に
+`Resource` が必須入力欄として表示されます。これはプラグイン独自の設定パラメータではなく、
+OAuth認証を初回構成するときに1回入力する値です。
+
+Security Copilotの公開マニフェスト仕様では、`TokenEndpoint`、`Scopes`、
+`ClientId`、`ClientSecret`、`AuthorizationContentType` は事前設定できますが、
+`Resource` の事前設定フィールドは公開されていません。そのため、未サポートの
+`Resource` プロパティをマニフェストへ追加せず、セットアップ画面で入力します。
+
+セットアップ画面に表示される次の3項目を入力してください。
 
 | 画面の項目 | 入力する値 |
 |---|---|
