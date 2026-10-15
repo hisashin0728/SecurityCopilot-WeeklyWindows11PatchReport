@@ -57,6 +57,157 @@ Security Copilot Standard Agent です。
 Microsoft Graph `/beta` API は変更される可能性があり、本番利用は Microsoft のサポート対象外です。
 運用前と Graph API 変更時に OpenAPI 応答スキーマを再確認してください。
 
+## 認証アーキテクチャと最小権限
+
+このエージェントは、用途の異なる3つの認証主体を使用します。権限を混在させないでください。
+
+| 認証主体 | 用途 | 対象サービス | 認証方式 |
+|---|---|---|---|
+| Security Copilotの代理ユーザー | KQLスキルによる`DeviceInfo`のAdvanced Hunting | Microsoft Defender XDR | Security Copilotの代理認証 |
+| Graph用サービスプリンシパル | Windows 11の最新品質更新とproduct revisionの取得 | Microsoft Graph | OAuth 2.0 Client Credentials |
+| Office 365 API接続のユーザー | HTMLレポートのメール送信 | Exchange Online | Logic AppのOffice 365接続 |
+
+```text
+Security Copilot Agent
+  |-- 代理ユーザー -----------------> Defender XDR Advanced Hunting
+  |                                    DeviceInfoの読み取り
+  |
+  |-- 専用サービスプリンシパル -----> Microsoft Graph
+  |                                    Windows Updates catalogの読み取り
+  |
+  `-- Logic App ---------------------> Office 365 API接続
+                                       HTMLメールの送信
+```
+
+### 1. Security Copilot代理認証: Defender Advanced Hunting
+
+カスタムエージェント自体の実行には、Security Copilotのエージェント設定画面で
+既存ユーザーを割り当てる代理認証を使用します。このユーザーの権限で、マニフェスト内の
+Defender KQLスキルが`DeviceInfo`を照会します。
+
+個人の管理者アカウントではなく、エージェント専用ユーザーを推奨します。代理認証は
+Security Copilot画面に表示される期限（現在は90日）までに再認証してください。
+
+#### 推奨: Microsoft Defender統合RBAC
+
+最小権限は、Microsoft Defender統合RBACのカスタムロールで次だけを付与する構成です。
+
+| 設定 | 値 |
+|---|---|
+| Permission group | Security operations |
+| Permission category | Security data |
+| Permission | Security data basics |
+| Level | Read |
+| Data source | Microsoft Defender for Endpoint |
+| Assignment | 代理認証に使用するユーザー、またはそのユーザーだけを含むグループ |
+| Device group scope | 全社レポートでは全対象デバイス グループ。限定レポートでは必要なグループだけ |
+
+`Security data basics (Read)`は、Advanced Hunting、デバイス、インシデント、アラート、
+調査、レポートなどの読み取りを許可します。本エージェントは読み取り専用であり、
+次のManage権限は不要です。
+
+- Alerts (Manage)
+- Response (Manage)
+- Basic / Advanced live response (Manage)
+- Detection rule management
+- File collection
+
+本エージェントの現在のKQLは`DeviceInfo`だけを使用するため、
+`Vulnerability management (Read)`も不要です。将来、`DeviceTvm*`テーブルを追加する場合は、
+Defender Vulnerability Managementデータへのアクセス要件を改めて評価してください。
+
+全社のWindows 11端末を集計するには、代理ユーザーのデバイス グループ スコープに
+全対象端末が含まれている必要があります。スコープを限定すると、レポートの母数とTop 10も
+そのスコープ内の端末だけになります。
+
+#### 代替: Microsoft Entraロール
+
+統合RBACを使用しない場合は、代理ユーザーにMicrosoft Entraの
+`Security Reader`ロールを割り当てます。これはAdvanced Huntingを含むDefender XDRの
+読み取り用途で使用できる最小権限の組み込みEntraロールです。
+
+| Entraロール | 利用可否 | 備考 |
+|---|---|---|
+| Security Reader | 推奨可能 | 読み取り専用。Entraロール パターンの最小権限 |
+| Global Reader | 利用可能だが非推奨 | Defender以外も広く読み取れるため過剰 |
+| Security Operator | 不要 | 操作権限を含み、本エージェントには過剰 |
+| Security Administrator | 不要 | 管理権限を含み、本エージェントには過剰 |
+| Global Administrator | 使用禁止 | 日常実行には過剰。緊急管理用途に限定 |
+
+最小権限とデバイス グループ単位のスコープ制御が可能なため、Entraロールより
+Defender統合RBACを優先してください。
+
+### 2. サービスプリンシパル: Microsoft Graph Windows Updates
+
+Windows 11の最新パッチ情報は、代理ユーザーではなく専用Entraアプリの
+サービスプリンシパルで取得します。
+
+> この認証はOpenID Connectではなく、**OAuth 2.0 Client Credentials Flow**です。
+> ユーザーのサインインやIDトークンは使用せず、サービスプリンシパルが
+> Microsoft Graph用アクセストークンを取得します。
+
+#### 最小権限
+
+| 設定 | 値 |
+|---|---|
+| API | Microsoft Graph |
+| Permission type | Application |
+| Permission | `WindowsUpdates.Read.All` |
+| Admin consent | 必須 |
+| Entraディレクトリ ロール | 不要 |
+| Resource | `https://graph.microsoft.com` |
+| OAuth scope | `https://graph.microsoft.com/.default` |
+| API endpoint | `GET /beta/admin/windows/updates/catalog/entries` |
+
+`WindowsUpdates.ReadWrite.All`は付与しないでください。本エージェントはカタログを
+読み取るだけで、更新プログラムの展開や管理操作を行いません。
+
+#### Graph用Entraアプリの作成
+
+1. Microsoft Entra管理センターで「アプリの登録」→「新規登録」を選択
+2. 名前を`SecurityCopilot-WeeklyWindows11PatchReport`などに設定
+3. 「この組織ディレクトリのみに含まれるアカウント」を選択
+4. リダイレクトURIは設定せず登録
+5. 「APIのアクセス許可」→「Microsoft Graph」→「アプリケーションの許可」を選択
+6. `WindowsUpdates.Read.All`だけを追加
+7. テナントの管理者同意を付与
+8. 「証明書とシークレット」でクライアントシークレットを作成し、値を安全に保管
+
+クライアントシークレットをマニフェストやGitHubへ記載しないでください。有効期限を監視し、
+期限前にローテーションしてください。
+
+#### Security CopilotのOAuthセットアップ
+
+`Resource`は固定値ですが、現在のSecurity Copilotでは認証セットアップ時の必須入力欄です。
+公開マニフェスト仕様に`Resource`の事前設定フィールドがないため、画面で1回入力します。
+
+| 画面の項目 | 入力する値 |
+|---|---|
+| ClientId | 作成したEntraアプリのApplication (client) ID |
+| ClientSecret | 作成したクライアントシークレットの**値** |
+| Resource | `https://graph.microsoft.com` |
+
+`Resource`には`/.default`や`/beta`を付けません。Microsoft GraphのアプリケーションIDや
+`WindowsUpdates.Read.All`も入力しません。
+
+マニフェストには次が設定されています。
+
+```yaml
+SupportedAuthTypes:
+  - OAuthClientCredentialsFlow
+Authorization:
+  Type: OAuthClientCredentialsFlow
+  TokenEndpoint: https://login.microsoftonline.com/<YOUR-TENANT-ID>/oauth2/v2.0/token
+  Scopes: https://graph.microsoft.com/.default
+  AuthorizationContentType: application/x-www-form-urlencoded
+```
+
+### 3. Logic App: Office 365メール送信
+
+Logic AppのOffice 365 API接続は、上記2つの認証とは別です。デプロイ後に、メール送信に
+使用するアカウントでAPI接続を認証します。このアカウントには、指定された送信元として
+メールを送信できる権限だけを付与してください。
+
 ## デプロイ
 
 ### 1. Logic App
@@ -98,103 +249,13 @@ Security Copilot は `WeeklyWindows11PatchReport.yaml` の `OpenApiSpecUrl` を�
 
 1. `WeeklyWindows11PatchReport.yaml` の `<YOUR-TENANT-ID>` を実際のTenant IDへ置換
 2. 編集した `WeeklyWindows11PatchReport.yaml` だけをカスタム プラグインとしてアップロード
-3. エージェントの認証（代理認証）で実行用ユーザー アカウントを割り当て
-4. Graph APIプラグインの認証に `OAuthClientCredentialsFlow` を設定
+3. エージェントの代理認証に、前述のAdvanced Hunting読み取り権限を持つユーザーを割り当て
+4. Graph APIプラグインに、前述の専用EntraアプリのClient ID、Client Secret、
+   Resourceを設定
 5. Logic App の Subscription ID、Resource Group、Workflow Name を設定
 6. Agent を有効化
 
 Agent は 604,800 秒（7 日）ごとに実行されます。
-
-Security Copilot のカスタムエージェントはエージェントIDに対応していないため、
-エージェント自体の実行には代理ユーザー認証を使用します。一方、Microsoft Graph
-Windows Updates APIの呼び出しには、代理ユーザーとは別に専用Entraアプリの
-OAuth 2.0クライアント資格情報フローを使用します。
-
-マニフェストの認証設定:
-
-```yaml
-SupportedAuthTypes:
-  - OAuthClientCredentialsFlow
-Authorization:
-  Type: OAuthClientCredentialsFlow
-  TokenEndpoint: https://login.microsoftonline.com/<YOUR-TENANT-ID>/oauth2/v2.0/token
-  Scopes: https://graph.microsoft.com/.default
-  AuthorizationContentType: application/x-www-form-urlencoded
-```
-
-#### Graph用Entraアプリの作成
-
-1. Microsoft Entra管理センターで「アプリの登録」→「新規登録」を選択
-2. 名前を `SecurityCopilot-WeeklyWindows11PatchReport` などに設定
-3. 「この組織ディレクトリのみに含まれるアカウント」を選択
-4. リダイレクトURIは設定せず登録
-5. 「APIのアクセス許可」→「Microsoft Graph」→「アプリケーションの許可」を選択
-6. `WindowsUpdates.Read.All` を追加
-7. テナントの管理者同意を付与
-8. 「証明書とシークレット」でクライアントシークレットを作成し、値を安全に保管
-
-#### Security Copilotのセットアップ画面で入力する値
-
-`Resource` はこのプラグインでは常にMicrosoft Graphを指す固定値です。
-ただし、現在のSecurity Copilotでは `OAuthClientCredentialsFlow` の認証セットアップ時に
-`Resource` が必須入力欄として表示されます。これはプラグイン独自の設定パラメータではなく、
-OAuth認証を初回構成するときに1回入力する値です。
-
-Security Copilotの公開マニフェスト仕様では、`TokenEndpoint`、`Scopes`、
-`ClientId`、`ClientSecret`、`AuthorizationContentType` は事前設定できますが、
-`Resource` の事前設定フィールドは公開されていません。そのため、未サポートの
-`Resource` プロパティをマニフェストへ追加せず、セットアップ画面で入力します。
-
-セットアップ画面に表示される次の3項目を入力してください。
-
-| 画面の項目 | 入力する値 |
-|---|---|
-| ClientId | 作成したEntraアプリのApplication (client) ID |
-| ClientSecret | 作成したクライアントシークレットの**値** |
-| Resource | `https://graph.microsoft.com` |
-
-> **Resourceには `https://graph.microsoft.com` を入力します。**
-> `/.default` や `/beta` は付けません。
-
-入力例:
-
-```text
-ClientId:     00000000-0000-0000-0000-000000000000
-ClientSecret: <Entraで作成したシークレットの値>
-Resource:     https://graph.microsoft.com
-```
-
-Resourceに入力しない値:
-
-```text
-https://graph.microsoft.com/.default
-https://graph.microsoft.com/beta
-00000003-0000-0000-c000-000000000000
-WindowsUpdates.Read.All
-```
-
-`Resource` はアクセストークンの対象APIを指定する欄です。Security Copilotは
-この値を使用してMicrosoft Graph向けのトークンを取得します。
-`WindowsUpdates.Read.All` はこの画面へ入力する値ではなく、Entraアプリの
-Microsoft Graph **Application permission** として事前に付与します。
-
-#### マニフェストに設定済みの値
-
-次の値は `WeeklyWindows11PatchReport.yaml` に設定するため、セットアップ画面では
-通常入力しません。
-
-| マニフェスト項目 | 値 |
-|---|---|
-| TokenEndpoint | `https://login.microsoftonline.com/<TENANT-ID>/oauth2/v2.0/token` |
-| Scopes | `https://graph.microsoft.com/.default` |
-| AuthorizationContentType | `application/x-www-form-urlencoded` |
-
-クライアントシークレットをマニフェストやGitHubへ記載しないでください。
-有効期限を監視し、期限前にローテーションしてください。
-
-代理ユーザー認証はカスタムエージェントの実行に引き続き必要で、画面に表示される
-期限（現在は90日）までに再認証します。ただし、Graph APIの
-`WindowsUpdates.Read.All` は代理ユーザーではなく、上記の専用Entraアプリへ付与します。
 
 ## トラブルシューティング
 
@@ -260,5 +321,9 @@ Windows 11 最新レコードを対象にします。
 
 - [product resource type - Microsoft Graph beta](https://learn.microsoft.com/graph/api/resources/windowsupdates-product?view=graph-rest-beta)
 - [List catalog entries - Microsoft Graph beta](https://learn.microsoft.com/graph/api/windowsupdates-catalog-list-entries?view=graph-rest-beta)
+- [Advanced hunting overview and required access](https://learn.microsoft.com/defender-xdr/advanced-hunting-overview)
+- [Permissions in Microsoft Defender unified RBAC](https://learn.microsoft.com/defender-xdr/custom-permissions-details)
+- [Manage Defender XDR access with Microsoft Entra roles](https://learn.microsoft.com/defender-xdr/m365d-permissions)
+- [OAuth 2.0 client credentials flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-client-creds-grant-flow)
 - [Windows 11 release information](https://learn.microsoft.com/windows/release-health/windows11-release-information)
 - [DeviceInfo table](https://learn.microsoft.com/defender-xdr/advanced-hunting-deviceinfo-table)
