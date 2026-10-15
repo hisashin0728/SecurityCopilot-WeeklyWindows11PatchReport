@@ -1,0 +1,129 @@
+openapi: 3.0.0
+info:
+  title: Microsoft Graph Windows Updates Catalog API
+  description: >-
+    Reads Windows quality update catalog entries and expanded product revisions.
+    The WeeklyWindows11PatchReport agent uses the response to determine the latest
+    published security quality-update build for each Windows 11 feature version.
+    Requires the Microsoft Graph application permission WindowsUpdates.Read.All.
+    This API uses the Microsoft Graph beta endpoint and is subject to change.
+  version: "1.0"
+servers:
+  - url: https://graph.microsoft.com/beta
+paths:
+  /admin/windows/updates/catalog/entries:
+    get:
+      operationId: ListWindowsQualityUpdates
+      summary: List Windows quality update catalog entries
+      description: |
+        Returns Windows update catalog entries. Expand quality-update productRevisions
+        to obtain Windows 11 feature versions and their target OS builds.
+        #ExamplePrompts Get the latest Windows 11 monthly security quality updates
+        #ExamplePrompts List Windows quality updates with product revisions
+      parameters:
+        - in: query
+          name: $top
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 12
+          required: false
+          description: Maximum number of update catalog entries to return.
+        - in: query
+          name: $filter
+          schema:
+            type: string
+          required: false
+          description: >-
+            OData filter. For this agent use:
+            isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry') and
+            microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/qualityUpdateClassification eq 'security'
+        - in: query
+          name: $expand
+          schema:
+            type: string
+          required: false
+          description: >-
+            OData expansion. Use
+            microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions.
+        - in: query
+          name: $orderby
+          schema:
+            type: string
+          required: false
+          description: OData ordering. Use releaseDateTime desc.
+      responses:
+        "200":
+          description: Windows update catalog entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  "@odata.context":
+                    type: string
+                  "@odata.nextLink":
+                    type: string
+                  value:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        "@odata.type":
+                          type: string
+                        id:
+                          type: string
+                        displayName:
+                          type: string
+                        catalogName:
+                          type: string
+                        shortName:
+                          type: string
+                        releaseDateTime:
+                          type: string
+                          format: date-time
+                        deployableUntilDateTime:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        isExpeditable:
+                          type: boolean
+                        qualityUpdateClassification:
+                          type: string
+                        qualityUpdateCadence:
+                          type: string
+                        productRevisions:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              displayName:
+                                type: string
+                              product:
+                                type: string
+                              version:
+                                type: string
+                              releaseDateTime:
+                                type: string
+                                format: date-time
+                              isHotpatchUpdate:
+                                type: boolean
+                              osBuild:
+                                type: object
+                                additionalProperties: true
+                              knowledgeBaseArticle:
+                                type: object
+                                additionalProperties: true
+        "400":
+          description: Invalid OData query
+        "401":
+          description: Authentication failed
+        "403":
+          description: WindowsUpdates.Read.All is missing or consent has not been granted
+        "429":
+          description: Microsoft Graph throttled the request
+        "500":
+          description: Microsoft Graph service error

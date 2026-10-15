@@ -1,0 +1,243 @@
+Descriptor:
+  Name: WeeklyWindows11PatchReport
+  DisplayName: Weekly Windows 11 Patch Report
+  Description: >-
+    Microsoft Graph Windows Updates カタログの最新品質更新情報と、Microsoft Defender XDR
+    Advanced Hunting の DeviceInfo で観測された Windows 11 の OS ビルドを週次で突合します。
+    パッチの配信基準、端末での適用状況、適用遅延率、週次推移、遅延端末 Top 10 を分析し、
+    メール互換の HTML/CSS レポートを Azure Logic App 経由で送信する Security Copilot
+    Standard Agent です。
+  DescriptionForModel: >-
+    Use this scheduled agent to create and email a weekly Windows 11 OS patch
+    compliance report. It compares Microsoft Graph Windows Updates catalog
+    product revisions with current Defender DeviceInfo builds and highlights
+    the ten most delayed devices.
+  SupportedAuthTypes:
+    - AAD
+  Authorization:
+    Type: AAD
+    EntraScopes: https://graph.microsoft.com/.default
+  Settings:
+    - Name: LogicAppSubscriptionId
+      Label: Logic App Subscription ID
+      Description: メール送信用 Logic App が存在する Azure サブスクリプション ID
+      HintText: "例: 00000000-0000-0000-0000-000000000000"
+      SettingType: String
+      Required: true
+    - Name: LogicAppResourceGroup
+      Label: Logic App Resource Group
+      Description: メール送信用 Logic App が存在するリソース グループ名
+      HintText: "例: rg-securitycopilot"
+      SettingType: String
+      Required: true
+    - Name: LogicAppWorkflowName
+      Label: Logic App Workflow Name
+      Description: Windows 11 パッチレポートを送信する Logic App 名
+      HintText: "例: PluginLogicApp_WeeklyWindows11PatchReport"
+      SettingType: String
+      Required: true
+
+AgentDefinitions:
+  - Name: WeeklyWindows11PatchReportAgent
+    DisplayName: Weekly Windows 11 Patch Report Agent
+    Description: >-
+      Windows 11 の最新品質更新を基準に Defender の端末ビルドを毎週評価し、
+      適用状況、遅延率、週次推移、遅延端末 Top 10 を HTML メールで報告します。
+    Publisher: Custom
+    Product: Security
+    RequiredSkillsets:
+      - WeeklyWindows11PatchReport
+    AgentSingleInstanceConstraint: Workspace
+    Triggers:
+      - Name: WeeklySchedule
+        DefaultPollPeriodSeconds: 604800
+        FetchSkill: ''
+        ProcessSkill: WeeklyWindows11PatchReport.OrchestrateWeeklyWindows11PatchReport
+
+SkillGroups:
+  - Format: Agent
+    Skills:
+      - Name: OrchestrateWeeklyWindows11PatchReport
+        DisplayName: Orchestrate Weekly Windows 11 Patch Report
+        Description: >-
+          最新品質更新の取得、Defender のビルド分布と端末状態の照合、遅延分析、
+          HTML レポート生成、メール送信を順番に実行します。
+        Interfaces:
+          - Agent
+        Settings:
+          Model: gpt-4.1
+          Instructions: |-
+            # ミッション
+            あなたは Windows Update とエンドポイント セキュリティの分析担当です。
+            Microsoft Graph Windows Updates カタログと Microsoft Defender XDR の観測データを
+            毎週突合し、Windows 11 OS パッチの配信基準と適用結果を日本語で報告してください。
+
+            # 実行ルール
+            - ChildSkills に記載されたスキルだけを、必ず 1 回に 1 つずつ順番に呼び出す。
+            - スキルが失敗した場合は再試行せず、失敗理由を保持して次へ進む。
+            - 取得できない値を推測または 0 とみなさない。レポートに「取得不可」と理由を記載する。
+            - Graph の /beta API は変更される可能性があるため、応答プロパティの存在を確認して使う。
+            - 個別端末はレポートに最大 10 台だけ掲載し、HTML 全体を 30 KB 以下にする。
+            - HTML は応答本文に出力せず、SendWeeklyWindows11PatchReportEmail の ReportHtml に渡す。
+
+            # Phase 1: 最新パッチ配信基準
+            1. ListWindowsQualityUpdates を次の値で 1 回呼び出す。
+               - $top: 12
+               - $filter:
+                 `isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry') and microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/qualityUpdateClassification eq 'security'`
+               - $expand:
+                 `microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions`
+               - $orderby: `releaseDateTime desc`
+            2. 月例セキュリティ更新（qualityUpdateCadence が monthly）を優先し、
+               productRevisions から product が `Windows 11` の項目だけを抽出する。
+            3. 各 feature version ごとに、releaseDateTime が最新の productRevision を
+               配信基準として保持する。保持項目は version、displayName、releaseDateTime、
+               osBuild、knowledgeBaseArticle（存在する場合）。
+            4. 同じ feature version に通常更新と hotpatch がある場合は通常更新
+               (`isHotpatchUpdate == false`) を標準基準にする。hotpatch は注記として扱う。
+
+            # Phase 2: Defender の適用結果
+            5. GetWindows11PatchInventory を呼び出し、直近 14 日に Defender が観測した
+               Windows 11 端末の OSVersionInfo / OSBuild / OSVersion 別台数を取得する。
+            6. GetWindows11PatchTrend を呼び出し、過去 28 日の週次ビルド分布を取得する。
+            7. GetWindows11PatchLagCandidates を呼び出し、古いビルド順の候補端末を取得する。
+
+            # Phase 3: 判定と集計
+            8. Graph の配信基準と Defender の各行を feature version で対応付ける。
+               OSVersionInfo に 23H2 / 24H2 / 25H2 / 26H1 / 26H2 などが含まれる場合はそれを使う。
+               含まれない場合は Graph productRevision.osBuild の buildNumber と
+               Defender OSBuild を対応付ける。対応付け不能な端末は「判定不能」とする。
+            9. Defender OSVersion の `major.minor.build.revision` を数値として比較する。
+               - 適用済み: 端末 build と revision が配信基準以上
+               - 遅延: 同じ buildNumber で端末 revision が配信基準未満
+               - 機能更新遅延: 端末の feature version がサービス終了、または基準対象外の旧版
+               - 判定不能: Graph 基準または端末の完全なバージョンが不足
+            10. 適用率 = 適用済み台数 / 判定可能台数 × 100。
+                遅延率 = (遅延 + 機能更新遅延) / 判定可能台数 × 100。
+                分母に判定不能を含めない。判定不能率は別に示す。
+            11. 「配信済み」は Graph カタログ上で公開済みの基準を意味し、
+                Intune/WUfB の割り当て成功を意味しないことを明記する。
+                「適用済み」は Defender が直近 14 日に観測した OS ビルドによる判定である。
+            12. 遅延候補から、まず機能更新遅延、次に不足 revision 数、最後に LastSeen の古さで
+                並べ、Top 10 を確定する。候補の全件を HTML に出力しない。
+
+            # Phase 4: HTML/CSS レポート
+            13. 次のセクションを必ず表示する。
+                1) エグゼクティブ サマリー
+                2) 最新パッチ配信基準（feature version / KB / 公開日 / 目標ビルド）
+                3) 適用状況（総数、判定可能、適用済み、遅延、判定不能、適用率、遅延率）
+                4) feature version 別の適用状況
+                5) 4 週間の適用トレンド
+                6) パッチ適用遅延端末 Top 10
+                7) 推奨アクション
+                8) データ品質と判定上の注意
+            14. Top 10 テーブル列:
+                順位、端末名、feature version、観測ビルド、目標ビルド、
+                不足 revision、最終観測、状態、推奨アクション。
+            15. 推奨アクションは事実に基づき、次を優先する。
+                - サービス終了版: 機能更新リングと互換性を確認してサポート版へ更新
+                - 2 回以上の月例更新相当の遅延: 更新リング、期限、セーフガード ホールドを確認
+                - LastSeen が 7 日超: 端末稼働、MDE センサー、ネットワーク接続を確認
+                - 判定不能: DeviceInfo の OSVersion / OSVersionInfo 収集状態を確認
+
+            # HTML 制約
+            - `<!DOCTYPE html>` から始まる完全な HTML を作る。
+            - 全テキストを日本語にする。
+            - table ベース、最大幅 720px、背景 #f5f5f5、本文 #323130 を使う。
+            - CSS はすべて style 属性へインライン化する。style タグ、JavaScript、画像、
+              SVG、canvas、flexbox、grid、position、float は使わない。
+            - 重要色は青 #0078d4、正常 #107c10、注意 #ffb900、重大 #d13438 を使う。
+            - 横棒グラフは table セルの背景色と幅で表現する。
+            - データが空なら「該当なし」、呼び出し失敗なら「取得不可（理由）」と表示する。
+            - フッターに生成日時、対象期間、データソース、Graph beta API 使用の注意を記載する。
+
+            # Phase 5: 送信
+            16. 完成した HTML を ReportHtml に設定し、
+                SendWeeklyWindows11PatchReportEmail を必ず 1 回呼び出す。
+            17. 送信成功後のみ、総端末数、適用率、遅延率、Top 10 の先頭端末を含む
+                簡潔な日本語の完了メッセージを返す。
+        ChildSkills:
+          - ListWindowsQualityUpdates
+          - GetWindows11PatchInventory
+          - GetWindows11PatchTrend
+          - GetWindows11PatchLagCandidates
+          - SendWeeklyWindows11PatchReportEmail
+
+  - Format: KQL
+    Skills:
+      - Name: GetWindows11PatchInventory
+        DisplayName: Get Windows 11 Patch Inventory
+        Description: >-
+          Defender DeviceInfo の直近状態を使用し、Windows 11 の OS バージョン別端末数を
+          集計します。最新品質更新との比較に必要な完全な OSVersion も返します。
+        Settings:
+          Target: Defender
+          Template: |-
+            DeviceInfo
+            | where Timestamp > ago(14d)
+            | where OSPlatform =~ "Windows11"
+            | summarize arg_max(Timestamp, OSBuild, OSVersion, OSVersionInfo, OnboardingStatus, MergedToDeviceId) by DeviceId
+            | where isempty(MergedToDeviceId)
+            | where OnboardingStatus =~ "Onboarded"
+            | summarize DeviceCount = dcount(DeviceId) by OSVersionInfo, OSBuild, OSVersion
+            | sort by OSBuild desc, OSVersion desc
+            | take 100
+
+      - Name: GetWindows11PatchTrend
+        DisplayName: Get Windows 11 Patch Trend
+        Description: >-
+          過去 28 日を 7 日単位で集計し、Windows 11 の OS ビルド分布推移を返します。
+        Settings:
+          Target: Defender
+          Template: |-
+            DeviceInfo
+            | where Timestamp > ago(28d)
+            | where OSPlatform =~ "Windows11"
+            | extend WeekStart = startofweek(Timestamp)
+            | summarize arg_max(Timestamp, OSBuild, OSVersion, OSVersionInfo, OnboardingStatus, MergedToDeviceId) by WeekStart, DeviceId
+            | where isempty(MergedToDeviceId)
+            | where OnboardingStatus =~ "Onboarded"
+            | summarize DeviceCount = dcount(DeviceId) by WeekStart, OSVersionInfo, OSBuild, OSVersion
+            | sort by WeekStart asc, OSBuild desc, OSVersion desc
+            | take 400
+
+      - Name: GetWindows11PatchLagCandidates
+        DisplayName: Get Windows 11 Patch Lag Candidates
+        Description: >-
+          Defender で観測された Windows 11 端末を古い OS ビルド順に返し、
+          Graph の最新基準と照合する Top 10 候補を最大 50 台に限定します。
+        Settings:
+          Target: Defender
+          Template: |-
+            DeviceInfo
+            | where Timestamp > ago(14d)
+            | where OSPlatform =~ "Windows11"
+            | summarize arg_max(Timestamp, DeviceName, OSBuild, OSVersion, OSVersionInfo, OnboardingStatus, MachineGroup, MergedToDeviceId) by DeviceId
+            | where isempty(MergedToDeviceId)
+            | where OnboardingStatus =~ "Onboarded"
+            | extend Revision = tolong(extract(@"^\d+\.\d+\.\d+\.(\d+)$", 1, OSVersion))
+            | extend Revision = coalesce(Revision, long(-1))
+            | sort by OSBuild asc, Revision asc, Timestamp asc
+            | project DeviceId, DeviceName, OSVersionInfo, OSBuild, OSVersion, Revision, LastSeen = Timestamp, MachineGroup
+            | take 50
+
+  - Format: API
+    Settings:
+      OpenApiSpecUrl: <YOUR-OPENAPI-SPEC-URL>/WeeklyWindows11PatchReport_GraphAPI_openapi.yaml
+
+  - Format: LogicApp
+    Skills:
+      - Name: SendWeeklyWindows11PatchReportEmail
+        DisplayName: Send Weekly Windows 11 Patch Report Email
+        Description: >-
+          生成した Windows 11 OS パッチ状況 HTML レポートを、Office 365 コネクタを持つ
+          Azure Logic App 経由で設定済みの宛先へ送信します。
+        Inputs:
+          - Name: ReportHtml
+            Description: 送信する週次 Windows 11 OS パッチ HTML レポートの全文
+            Required: true
+        Settings:
+          SubscriptionId: "{{LogicAppSubscriptionId}}"
+          ResourceGroup: "{{LogicAppResourceGroup}}"
+          WorkflowName: "{{LogicAppWorkflowName}}"
+          TriggerName: manual

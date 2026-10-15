@@ -1,1 +1,112 @@
-# SecurityCopilot-WeeklyWindows11PatchReport
+# Weekly Windows 11 Patch Report
+
+Microsoft Graph Windows Updates カタログの最新品質更新と、Microsoft Defender XDR
+`DeviceInfo` の Windows 11 OS ビルドを週次で突合し、HTML メールを送信する
+Security Copilot Standard Agent です。
+
+## 分析内容
+
+- Windows 11 feature version ごとの最新月例セキュリティ更新（KB、公開日、目標ビルド）
+- Defender が直近 14 日に観測した適用済み、遅延、判定不能の端末数
+- 判定可能端末を分母にした適用率と遅延率
+- 4 週間の OS ビルド分布と適用トレンド
+- feature version 別の適用状況
+- パッチ適用遅延端末 Top 10
+- 優先度付き推奨アクション
+
+## 判定モデル
+
+| 状態 | 判定 |
+|---|---|
+| 適用済み | Defender の完全な OS バージョンが同じ feature version の Graph 最新基準以上 |
+| 遅延 | 同じ buildNumber で update build revision が最新基準未満 |
+| 機能更新遅延 | サービス終了版、または最新基準に対応しない旧 feature version |
+| 判定不能 | Graph 基準、feature version、または完全な端末バージョンが不足 |
+
+`適用率 = 適用済み / 判定可能端末`、`遅延率 = 遅延端末 / 判定可能端末`
+として算出します。判定不能端末は分母から除外し、別のデータ品質指標として表示します。
+
+> Graph カタログの「配信済み」は Microsoft が更新を公開済みであることを示します。
+> Intune / Windows Update for Business の割り当て成功やダウンロード成功を直接示すものでは
+> ありません。「適用済み」は Defender が直近 14 日に観測した OS ビルドによる判定です。
+
+## ファイル
+
+| ファイル | 用途 |
+|---|---|
+| `WeeklyWindows11PatchReport.yaml` | Agent、KQL、Graph API、Logic App スキル |
+| `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml` | Graph beta API の OpenAPI 3.0 仕様 |
+| `WeeklyWindows11PatchReport_LogicApp_ARM.json` | Office 365 メール送信用 Logic App |
+| `WeeklyWindows11PatchReport_SampleEmail.html` | 架空データによるレポート表示例 |
+| `WeeklyWindows11PatchReport_card.html` | プラグイン カード |
+
+## 前提条件
+
+1. Security Copilot で Microsoft Defender XDR プラグインが有効
+2. Defender for Endpoint に端末がオンボード済み
+3. Graph アプリケーション権限 `WindowsUpdates.Read.All` に管理者同意済み
+4. メール送信用 Logic App と Office 365 接続が利用可能
+5. OpenAPI ファイルを GitHub raw または Azure Blob などの HTTPS 公開 URL に配置
+
+Microsoft Graph `/beta` API は変更される可能性があり、本番利用は Microsoft のサポート対象外です。
+運用前と Graph API 変更時に OpenAPI 応答スキーマを再確認してください。
+
+## デプロイ
+
+### 1. Logic App
+
+```powershell
+az deployment group create `
+  --resource-group <RESOURCE-GROUP> `
+  --template-file .\WeeklyWindows11PatchReport_LogicApp_ARM.json `
+  --parameters emailAddress="recipient@contoso.com"
+```
+
+デプロイ後、Azure ポータルで Office 365 接続を認証します。
+
+### 2. OpenAPI
+
+`WeeklyWindows11PatchReport_GraphAPI_openapi.yaml` を HTTPS で公開し、
+`WeeklyWindows11PatchReport.yaml` の次の値を置換します。
+
+```yaml
+OpenApiSpecUrl: <YOUR-OPENAPI-SPEC-URL>/WeeklyWindows11PatchReport_GraphAPI_openapi.yaml
+```
+
+### 3. Security Copilot
+
+1. `WeeklyWindows11PatchReport.yaml` をカスタム プラグインとしてアップロード
+2. Graph 認証を構成し、`WindowsUpdates.Read.All` を付与
+3. Logic App の Subscription ID、Resource Group、Workflow Name を設定
+4. Agent を有効化
+
+Agent は 604,800 秒（7 日）ごとに実行されます。
+
+## Defender KQL スキル
+
+| スキル | 期間 | 出力 |
+|---|---:|---|
+| `GetWindows11PatchInventory` | 14 日 | OSVersionInfo / OSBuild / OSVersion 別台数 |
+| `GetWindows11PatchTrend` | 28 日 | 週別 OS ビルド分布 |
+| `GetWindows11PatchLagCandidates` | 14 日 | 古いビルド順の候補端末 50 台 |
+
+クエリは `MergedToDeviceId` が空、`OnboardingStatus == Onboarded` の
+Windows 11 最新レコードを対象にします。
+
+## データ品質上の注意
+
+- 14 日間 Defender に接続していない端末は母数に含まれません。
+- `OSVersion` が `major.minor.build.revision` 形式でない端末は判定不能になり得ます。
+- Insider、LTSC、hotpatch は標準の一般提供チャネルと分けて確認してください。
+- Windows 11 のリリース情報ページは運用時の目視確認にも利用してください。
+
+> この生成環境では Defender Advanced Hunting のテナント ライブ スキーマ取得ツールを
+> 利用できなかったため、KQL は Microsoft Learn の最新 `DeviceInfo` スキーマを基準に
+> 検証しています。導入先で初回実行前に各 KQL を Advanced Hunting でテストしてください。
+
+## 公式資料
+
+- [product resource type - Microsoft Graph beta](https://learn.microsoft.com/graph/api/resources/windowsupdates-product?view=graph-rest-beta)
+- [List catalog entries - Microsoft Graph beta](https://learn.microsoft.com/graph/api/windowsupdates-catalog-list-entries?view=graph-rest-beta)
+- [Windows 11 release information](https://learn.microsoft.com/windows/release-health/windows11-release-information)
+- [DeviceInfo table](https://learn.microsoft.com/defender-xdr/advanced-hunting-deviceinfo-table)
