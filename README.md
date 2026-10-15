@@ -50,11 +50,9 @@ Security Copilot Standard Agent です。
 
 1. Security Copilot で Microsoft Defender XDR プラグインが有効
 2. Defender for Endpoint に端末がオンボード済み
-3. Graph 委任権限 `WindowsUpdates.Read.All` に管理者同意済み
+3. 専用EntraアプリにGraphアプリケーション権限 `WindowsUpdates.Read.All` を付与し、管理者同意済み
 4. メール送信用 Logic App と Office 365 接続が利用可能
 5. Security Copilot から GitHub raw の OpenAPI URL へ HTTPS アクセス可能
-6. 代理認証に使用する専用ユーザーへ `Windows Update Deployment Administrator`
-   または `Intune Administrator` ロールを割り当て済み
 
 Microsoft Graph `/beta` API は変更される可能性があり、本番利用は Microsoft のサポート対象外です。
 運用前と Graph API 変更時に OpenAPI 応答スキーマを再確認してください。
@@ -98,32 +96,77 @@ Security Copilot は `WeeklyWindows11PatchReport.yaml` の `OpenApiSpecUrl` を�
 
 ### 3. Security Copilot
 
-1. `WeeklyWindows11PatchReport.yaml` だけをカスタム プラグインとしてアップロード
-2. エージェントの認証（代理認証）で実行用ユーザー アカウントを割り当て
-3. Microsoft Graph の委任権限 `WindowsUpdates.Read.All` に管理者同意
-4. Logic App の Subscription ID、Resource Group、Workflow Name を設定
-5. Agent を有効化
+1. `WeeklyWindows11PatchReport.yaml` の `<YOUR-TENANT-ID>` を実際のTenant IDへ置換
+2. 編集した `WeeklyWindows11PatchReport.yaml` だけをカスタム プラグインとしてアップロード
+3. エージェントの認証（代理認証）で実行用ユーザー アカウントを割り当て
+4. Graph APIプラグインの認証に `OAuthClientCredentialsFlow` を設定
+5. Logic App の Subscription ID、Resource Group、Workflow Name を設定
+6. Agent を有効化
 
 Agent は 604,800 秒（7 日）ごとに実行されます。
 
 Security Copilot のカスタムエージェントはエージェントIDに対応していないため、
-このエージェントは `AADDelegated` と代理ユーザー認証を使用します。
-マニフェストで要求するスコープは次のとおりです。
+エージェント自体の実行には代理ユーザー認証を使用します。一方、Microsoft Graph
+Windows Updates APIの呼び出しには、代理ユーザーとは別に専用Entraアプリの
+OAuth 2.0クライアント資格情報フローを使用します。
+
+マニフェストの認証設定:
 
 ```yaml
 SupportedAuthTypes:
-  - AADDelegated
+  - OAuthClientCredentialsFlow
 Authorization:
-  Type: AADDelegated
-  EntraScopes: https://graph.microsoft.com/WindowsUpdates.Read.All
+  Type: OAuthClientCredentialsFlow
+  TokenEndpoint: https://login.microsoftonline.com/<YOUR-TENANT-ID>/oauth2/v2.0/token
+  Scopes: https://graph.microsoft.com/.default
+  AuthorizationContentType: application/x-www-form-urlencoded
 ```
 
-代理ユーザーには `Windows Update Deployment Administrator` または
-`Intune Administrator` の最小限必要なロールを割り当ててください。
-個人の管理者アカウントではなく、このエージェント専用のユーザーを推奨します。
-画面に表示される期限（現在は90日）までに再認証が必要です。
+#### Graph用Entraアプリの作成
+
+1. Microsoft Entra管理センターで「アプリの登録」→「新規登録」を選択
+2. 名前を `SecurityCopilot-WeeklyWindows11PatchReport` などに設定
+3. 「この組織ディレクトリのみに含まれるアカウント」を選択
+4. リダイレクトURIは設定せず登録
+5. 「APIのアクセス許可」→「Microsoft Graph」→「アプリケーションの許可」を選択
+6. `WindowsUpdates.Read.All` を追加
+7. テナントの管理者同意を付与
+8. 「証明書とシークレット」でクライアントシークレットを作成し、値を安全に保管
+
+#### Security Copilotへ入力する値
+
+| 項目 | 値 |
+|---|---|
+| Token endpoint | `https://login.microsoftonline.com/<TENANT-ID>/oauth2/v2.0/token` |
+| Scopes | `https://graph.microsoft.com/.default` |
+| Client ID | 作成したアプリのApplication (client) ID |
+| Client Secret | 作成したクライアントシークレットの値 |
+| Authorization content type | `application/x-www-form-urlencoded` |
+
+クライアントシークレットをマニフェストやGitHubへ記載しないでください。
+有効期限を監視し、期限前にローテーションしてください。
+
+代理ユーザー認証はカスタムエージェントの実行に引き続き必要で、画面に表示される
+期限（現在は90日）までに再認証します。ただし、Graph APIの
+`WindowsUpdates.Read.All` は代理ユーザーではなく、上記の専用Entraアプリへ付与します。
 
 ## トラブルシューティング
+
+### `AADSTS65002: Consent between first party application ... must be configured via preauthorization`
+
+Security CopilotのMicrosoft管理ファーストパーティ アプリから、Microsoft Graphの
+`WindowsUpdates.Read.All` を代理認証で要求した場合に発生します。ファーストパーティ
+アプリ間の権限はMicrosoft側の事前承認が必要で、テナント管理者の同意だけでは解消できません。
+
+本リポジトリの最新マニフェストは、この制約を回避するため
+`OAuthClientCredentialsFlow` を使用します。
+
+1. 以前登録したプラグイン／エージェントを削除または更新
+2. 最新の `WeeklyWindows11PatchReport.yaml` をダウンロードし、
+   `<YOUR-TENANT-ID>` を実際のTenant IDへ置換して再アップロード
+3. 専用EntraアプリのToken endpoint、Client ID、Client Secretを設定
+4. エージェントの代理ユーザー認証も再設定
+5. `ListWindowsQualityUpdates` を再実行
 
 ### `No SkillsetDescriptor is specified`
 
@@ -132,10 +175,11 @@ Authorization:
 
 1. エラー画面で戻る
 2. 「カスタム プラグインの追加」を再実行
-3. リポジトリの
+3. リポジトリの次のマニフェストをダウンロードし、
    [`WeeklyWindows11PatchReport.yaml`](https://raw.githubusercontent.com/hisashin0728/SecurityCopilot-WeeklyWindows11PatchReport/refs/heads/main/WeeklyWindows11PatchReport.yaml)
-   を選択
-4. OpenAPI URL が自動的に読み込まれることを確認
+   の `<YOUR-TENANT-ID>` を実際のTenant IDへ置換
+4. 編集した `WeeklyWindows11PatchReport.yaml` を選択
+5. OpenAPI URL が自動的に読み込まれることを確認
 
 アップロード対象ではないファイル:
 

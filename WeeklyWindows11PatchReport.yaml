@@ -13,10 +13,12 @@ Descriptor:
     product revisions with current Defender DeviceInfo builds and highlights
     the ten most delayed devices.
   SupportedAuthTypes:
-    - AADDelegated
+    - OAuthClientCredentialsFlow
   Authorization:
-    Type: AADDelegated
-    EntraScopes: https://graph.microsoft.com/WindowsUpdates.Read.All
+    Type: OAuthClientCredentialsFlow
+    TokenEndpoint: https://login.microsoftonline.com/<YOUR-TENANT-ID>/oauth2/v2.0/token
+    Scopes: https://graph.microsoft.com/.default
+    AuthorizationContentType: application/x-www-form-urlencoded
   Settings:
     - Name: LogicAppSubscriptionId
       Label: Logic App Subscription ID
