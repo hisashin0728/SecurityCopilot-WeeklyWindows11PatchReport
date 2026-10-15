@@ -138,10 +138,15 @@ Authorization:
 | 項目 | 値 |
 |---|---|
 | Token endpoint | `https://login.microsoftonline.com/<TENANT-ID>/oauth2/v2.0/token` |
-| Scopes | `https://graph.microsoft.com/.default` |
+| APIのリソース / Scopes | `https://graph.microsoft.com/.default` |
 | Client ID | 作成したアプリのApplication (client) ID |
 | Client Secret | 作成したクライアントシークレットの値 |
 | Authorization content type | `application/x-www-form-urlencoded` |
+
+Security Copilotの画面で項目名が「APIのリソース」と表示される場合も、
+`https://graph.microsoft.com/.default` を入力してください。
+`https://graph.microsoft.com/beta`、Microsoft GraphのアプリケーションID、
+`WindowsUpdates.Read.All` 単体は入力しません。
 
 クライアントシークレットをマニフェストやGitHubへ記載しないでください。
 有効期限を監視し、期限前にローテーションしてください。
