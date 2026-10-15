@@ -50,9 +50,11 @@ Security Copilot Standard Agent です。
 
 1. Security Copilot で Microsoft Defender XDR プラグインが有効
 2. Defender for Endpoint に端末がオンボード済み
-3. Graph アプリケーション権限 `WindowsUpdates.Read.All` に管理者同意済み
+3. Graph 委任権限 `WindowsUpdates.Read.All` に管理者同意済み
 4. メール送信用 Logic App と Office 365 接続が利用可能
 5. Security Copilot から GitHub raw の OpenAPI URL へ HTTPS アクセス可能
+6. 代理認証に使用する専用ユーザーへ `Windows Update Deployment Administrator`
+   または `Intune Administrator` ロールを割り当て済み
 
 Microsoft Graph `/beta` API は変更される可能性があり、本番利用は Microsoft のサポート対象外です。
 運用前と Graph API 変更時に OpenAPI 応答スキーマを再確認してください。
@@ -97,11 +99,29 @@ Security Copilot は `WeeklyWindows11PatchReport.yaml` の `OpenApiSpecUrl` を�
 ### 3. Security Copilot
 
 1. `WeeklyWindows11PatchReport.yaml` だけをカスタム プラグインとしてアップロード
-2. Graph 認証を構成し、`WindowsUpdates.Read.All` を付与
-3. Logic App の Subscription ID、Resource Group、Workflow Name を設定
-4. Agent を有効化
+2. エージェントの認証（代理認証）で実行用ユーザー アカウントを割り当て
+3. Microsoft Graph の委任権限 `WindowsUpdates.Read.All` に管理者同意
+4. Logic App の Subscription ID、Resource Group、Workflow Name を設定
+5. Agent を有効化
 
 Agent は 604,800 秒（7 日）ごとに実行されます。
+
+Security Copilot のカスタムエージェントはエージェントIDに対応していないため、
+このエージェントは `AADDelegated` と代理ユーザー認証を使用します。
+マニフェストで要求するスコープは次のとおりです。
+
+```yaml
+SupportedAuthTypes:
+  - AADDelegated
+Authorization:
+  Type: AADDelegated
+  EntraScopes: https://graph.microsoft.com/WindowsUpdates.Read.All
+```
+
+代理ユーザーには `Windows Update Deployment Administrator` または
+`Intune Administrator` の最小限必要なロールを割り当ててください。
+個人の管理者アカウントではなく、このエージェント専用のユーザーを推奨します。
+画面に表示される期限（現在は90日）までに再認証が必要です。
 
 ## トラブルシューティング
 

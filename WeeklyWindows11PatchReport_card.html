@@ -409,8 +409,8 @@
       displayName: "Weekly Windows 11 Patch Report",
       description: "Microsoft Graph Windows Updates カタログの最新品質更新情報と Microsoft Defender XDR DeviceInfo の Windows 11 OS ビルドを週次で突合し、適用率、遅延率、週次推移、遅延端末 Top 10 を HTML メールで報告します。",
       auth: {
-        type: "AAD",
-        details: "Microsoft Graph application permission: WindowsUpdates.Read.All"
+        type: "AADDelegated",
+        details: "Microsoft Graph delegated permission: WindowsUpdates.Read.All"
       },
       skillGroups: [
         {

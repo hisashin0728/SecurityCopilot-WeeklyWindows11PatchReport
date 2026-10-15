@@ -5,7 +5,7 @@ info:
     Reads Windows quality update catalog entries and expanded product revisions.
     The WeeklyWindows11PatchReport agent uses the response to determine the latest
     published security quality-update build for each Windows 11 feature version.
-    Requires the Microsoft Graph application permission WindowsUpdates.Read.All.
+    Requires the Microsoft Graph delegated permission WindowsUpdates.Read.All.
     This API uses the Microsoft Graph beta endpoint and is subject to change.
   version: "1.0"
 servers:
