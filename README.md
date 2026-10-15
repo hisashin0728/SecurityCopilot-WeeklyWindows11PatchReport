@@ -133,20 +133,51 @@ Authorization:
 7. テナントの管理者同意を付与
 8. 「証明書とシークレット」でクライアントシークレットを作成し、値を安全に保管
 
-#### Security Copilotへ入力する値
+#### Security Copilotのセットアップ画面で入力する値
 
-| 項目 | 値 |
+セットアップ画面に表示される次の3項目を入力します。
+
+| 画面の項目 | 入力する値 |
 |---|---|
-| Token endpoint | `https://login.microsoftonline.com/<TENANT-ID>/oauth2/v2.0/token` |
-| APIのリソース / Scopes | `https://graph.microsoft.com/.default` |
-| Client ID | 作成したアプリのApplication (client) ID |
-| Client Secret | 作成したクライアントシークレットの値 |
-| Authorization content type | `application/x-www-form-urlencoded` |
+| ClientId | 作成したEntraアプリのApplication (client) ID |
+| ClientSecret | 作成したクライアントシークレットの**値** |
+| Resource | `https://graph.microsoft.com` |
 
-Security Copilotの画面で項目名が「APIのリソース」と表示される場合も、
-`https://graph.microsoft.com/.default` を入力してください。
-`https://graph.microsoft.com/beta`、Microsoft GraphのアプリケーションID、
-`WindowsUpdates.Read.All` 単体は入力しません。
+> **Resourceには `https://graph.microsoft.com` を入力します。**
+> `/.default` や `/beta` は付けません。
+
+入力例:
+
+```text
+ClientId:     00000000-0000-0000-0000-000000000000
+ClientSecret: <Entraで作成したシークレットの値>
+Resource:     https://graph.microsoft.com
+```
+
+Resourceに入力しない値:
+
+```text
+https://graph.microsoft.com/.default
+https://graph.microsoft.com/beta
+00000003-0000-0000-c000-000000000000
+WindowsUpdates.Read.All
+```
+
+`Resource` はアクセストークンの対象APIを指定する欄です。Security Copilotは
+この値を使用してMicrosoft Graph向けのトークンを取得します。
+`WindowsUpdates.Read.All` はこの画面へ入力する値ではなく、Entraアプリの
+Microsoft Graph **Application permission** として事前に付与します。
+
+#### マニフェストに設定済みの値
+
+次の値は `WeeklyWindows11PatchReport.yaml` に設定するため、セットアップ画面では
+通常入力しません。
+
+| マニフェスト項目 | 値 |
+|---|---|
+| TokenEndpoint | `https://login.microsoftonline.com/<TENANT-ID>/oauth2/v2.0/token` |
+| Scopes | `https://graph.microsoft.com/.default` |
+| AuthorizationContentType | `application/x-www-form-urlencoded` |
 
 クライアントシークレットをマニフェストやGitHubへ記載しないでください。
 有効期限を監視し、期限前にローテーションしてください。
