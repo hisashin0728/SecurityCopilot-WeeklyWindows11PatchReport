@@ -7,7 +7,7 @@ info:
     published security quality-update build for each Windows 11 feature version.
     Requires the Microsoft Graph application permission WindowsUpdates.Read.All.
     This API uses the Microsoft Graph beta endpoint and is subject to change.
-  version: "1.0"
+  version: "1.1"
 servers:
   - url: https://graph.microsoft.com/beta
 paths:
@@ -18,6 +18,8 @@ paths:
       description: |
         Returns Windows update catalog entries. Expand quality-update productRevisions
         to obtain Windows 11 feature versions and their target OS builds.
+        Use only the documented query values below. Filter security classification
+        and Windows 11 products in the response, not in the OData request.
         #ExamplePrompts Get the latest Windows 11 monthly security quality updates
         #ExamplePrompts List Windows quality updates with product revisions
       parameters:
@@ -34,15 +36,21 @@ paths:
           name: $filter
           schema:
             type: string
+            enum:
+              - "isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry')"
+            default: "isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry')"
           required: false
           description: >-
-            OData filter. For this agent use:
-            isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry') and
-            microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/qualityUpdateClassification eq 'security'
+            Filter by the quality-update resource type only. Do not append a
+            qualityUpdateClassification comparison. Select security entries from
+            the response after the request succeeds.
         - in: query
           name: $expand
           schema:
             type: string
+            enum:
+              - microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions
+            default: microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions
           required: false
           description: >-
             OData expansion. Use
@@ -51,6 +59,9 @@ paths:
           name: $orderby
           schema:
             type: string
+            enum:
+              - releaseDateTime desc
+            default: releaseDateTime desc
           required: false
           description: OData ordering. Use releaseDateTime desc.
       responses:

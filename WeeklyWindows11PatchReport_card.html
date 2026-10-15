@@ -410,7 +410,7 @@
       description: "Microsoft Graph Windows Updates カタログの最新品質更新情報と Microsoft Defender XDR DeviceInfo の Windows 11 OS ビルドを週次で突合し、適用率、遅延率、週次推移、遅延端末 Top 10 を HTML メールで報告します。",
       auth: {
         type: "OAuthClientCredentialsFlow",
-        details: "Dedicated Entra app with Microsoft Graph application permission WindowsUpdates.Read.All"
+        details: "Dedicated Entra app with Microsoft Graph application permission WindowsUpdates.Read.All; generate the upload manifest with the TenantId parameter"
       },
       skillGroups: [
         {
@@ -456,8 +456,8 @@
               description: "Microsoft Graph beta から品質更新カタログと Windows 11 product revisions を取得します。",
               inputs: [
                 { name: "$top", description: "取得件数", required: false, defaultValue: "12" },
-                { name: "$filter", description: "品質更新の OData フィルター", required: false, defaultValue: "" },
-                { name: "$expand", description: "productRevisions の OData 展開", required: false, defaultValue: "" },
+                { name: "$filter", description: "品質更新の型だけで絞り込み。security 分類は応答取得後に選別", required: false, defaultValue: "isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry')" },
+                { name: "$expand", description: "productRevisions の OData 展開", required: false, defaultValue: "microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions" },
                 { name: "$orderby", description: "公開日時の並び順", required: false, defaultValue: "releaseDateTime desc" }
               ]
             }

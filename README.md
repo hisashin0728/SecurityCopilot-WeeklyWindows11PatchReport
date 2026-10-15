@@ -34,14 +34,16 @@ Security Copilot Standard Agent です。
 
 | ファイル | 用途 |
 |---|---|
-| `WeeklyWindows11PatchReport.yaml` | **Security Copilot にアップロードするプラグイン マニフェスト**。Agent、KQL、Graph API、Logic App スキルを定義 |
+| `WeeklyWindows11PatchReport.yaml` | プラグイン マニフェストの公開テンプレート。Agent、KQL、Graph API、Logic App スキルを定義。直接アップロードしない |
+| `New-WeeklyWindows11PatchReportManifest.ps1` | `-TenantId`からアップロード用マニフェストを生成 |
+| `WeeklyWindows11PatchReport.local.yaml` | **Security Copilot にアップロードする生成済みマニフェスト**。ローカルで生成し、公開GitHubには保存しない |
 | `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml` | Graph beta API の OpenAPI 3.0 仕様。マニフェストから HTTPS で参照するファイルであり、Security Copilot へ直接アップロードしない |
 | `WeeklyWindows11PatchReport_LogicApp_ARM.json` | Office 365 メール送信用 Logic App |
 | `WeeklyWindows11PatchReport_SampleEmail.html` | 架空データによるレポート表示例 |
 | `WeeklyWindows11PatchReport_card.html` | プラグイン カード |
 
 > **重要:** Security Copilot の「カスタム プラグインの追加」で選択するファイルは
-> `WeeklyWindows11PatchReport.yaml` です。
+> `-TenantId`を指定して生成した`WeeklyWindows11PatchReport.local.yaml`です。
 > `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml` を直接選択すると、このファイルには
 > Security Copilot の `Descriptor` がないため、
 > `2002: Failed to load yaml: No SkillsetDescriptor is specified` が発生します。
@@ -183,6 +185,7 @@ Windows 11の最新パッチ情報は、代理ユーザーではなく専用Entr
 
 | 画面の項目 | 入力する値 |
 |---|---|
+| Token endpoint | 生成済みマニフェストに設定済み。画面に表示される場合は、実際のTenant IDを含むURLであることを確認 |
 | ClientId | 作成したEntraアプリのApplication (client) ID |
 | ClientSecret | 作成したクライアントシークレットの**値** |
 | Resource | `https://graph.microsoft.com` |
@@ -190,7 +193,21 @@ Windows 11の最新パッチ情報は、代理ユーザーではなく専用Entr
 `Resource`には`/.default`や`/beta`を付けません。Microsoft GraphのアプリケーションIDや
 `WindowsUpdates.Read.All`も入力しません。
 
-マニフェストには次が設定されています。
+Tenant IDは公開テンプレートへ埋め込みません。アップロード前に、生成スクリプトの
+`-TenantId`パラメーターへDirectory (tenant) IDを渡します。たとえばTenant IDが
+`11111111-2222-3333-4444-555555555555`の場合、生成されたマニフェストには次のURLが設定されます。
+
+```text
+https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/oauth2/v2.0/token
+```
+
+Security Copilotのプラグインマニフェストには、Tenant IDだけを受け取って
+`TokenEndpoint`へ文字列展開する正式な設定項目は確認できていません。そのため、未検証の
+`{{TenantId}}`構文は使用しません。また、今回の環境では`TokenEndpoint`を省略すると
+登録時に`Value cannot be null. (Parameter 'uriString')`で失敗します。
+認証画面で後から入力する方式ではなく、URLを設定したマニフェストを生成して登録します。
+
+公開テンプレートには次が設定されています。このテンプレート自体はアップロードしないでください。
 
 ```yaml
 SupportedAuthTypes:
@@ -247,8 +264,20 @@ Security Copilot は `WeeklyWindows11PatchReport.yaml` の `OpenApiSpecUrl` を�
 
 ### 3. Security Copilot
 
-1. `WeeklyWindows11PatchReport.yaml` の `<YOUR-TENANT-ID>` を実際のTenant IDへ置換
-2. 編集した `WeeklyWindows11PatchReport.yaml` だけをカスタム プラグインとしてアップロード
+テンプレートと[生成スクリプト](./New-WeeklyWindows11PatchReportManifest.ps1)を同じフォルダーへ保存し、
+そのフォルダーで次を実行します。例のGUIDは実際のDirectory (tenant) IDへ変更してください。
+
+```powershell
+.\New-WeeklyWindows11PatchReportManifest.ps1 -TenantId '11111111-2222-3333-4444-555555555555'
+```
+
+生成される`WeeklyWindows11PatchReport.local.yaml`は、Tenant IDを設定済みのアップロード用
+マニフェストです。既存ファイルは上書きしません。再生成する場合は`-OutputPath`で別名を指定します。
+既定の生成ファイルは`.gitignore`で除外しています。別名で生成したファイルも公開GitHubへ
+コミットしないでください。Client Secretは生成ファイルへ記載しません。
+
+1. `-TenantId`パラメーターを指定してアップロード用マニフェストを生成
+2. **生成された`WeeklyWindows11PatchReport.local.yaml`だけ**をカスタム プラグインとしてアップロード
 3. エージェントの代理認証に、前述のAdvanced Hunting読み取り権限を持つユーザーを割り当て
 4. Graph APIプラグインに、前述の専用EntraアプリのClient ID、Client Secret、
    Resourceを設定
@@ -258,6 +287,45 @@ Security Copilot は `WeeklyWindows11PatchReport.yaml` の `OpenApiSpecUrl` を�
 Agent は 604,800 秒（7 日）ごとに実行されます。
 
 ## トラブルシューティング
+
+### Graphカタログ取得時の `400 BadRequest`
+
+トークン取得処理ではなく、GraphへのGET要求で返るエラーです。400だけでは原因を
+確定できません。Graph応答の`error.code`と`error.message`、実際に送信された
+クエリーパラメーターを確認します。アクセストークンやClient Secretは共有しないでください。
+
+以前の要求では、品質更新の型判定に加えて
+`qualityUpdateClassification eq 'security'`の比較をサーバー側のフィルターに含めていました。
+最新のOpenAPIではこの比較を外し、公式例で使用される型判定とproductRevisions展開、
+公開日時の降順に限定しています。セキュリティ更新の選別は応答取得後に行います。
+
+| パラメーター | 値 |
+|---|---|
+| `$top` | `12` |
+| `$filter` | `isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry')` |
+| `$expand` | `microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions` |
+| `$orderby` | `releaseDateTime desc` |
+
+パラメーター値には、`$filter=`などのキー、バッククォート、手動でURLエンコードした値を
+含めません。応答に`@odata.nextLink`がある場合、取得したページだけが分析対象です。
+基準が取得できなかったfeature versionを適用済みとは判定しません。
+
+OpenAPIはGitHub raw URLから読み込まれるため、ローカルのOpenAPIだけを変更しても
+登録済みプラグインへは反映されません。公開OpenAPIを更新したうえで、更新済みマニフェストを
+再登録または更新し、`ListWindowsQualityUpdates`を単独実行してからエージェントを実行します。
+
+それでも400が返る場合は、Graph応答の`error.code`と`error.message`および
+実際のクエリーパラメーターを確認し、原因を切り分けます。読み取り要求の400を理由に
+`WindowsUpdates.ReadWrite.All`へ権限を拡大しないでください。
+
+### `2002: Failed to load yaml: Value cannot be null. (Parameter 'uriString')`
+
+今回の環境では、`Authorization.TokenEndpoint`を省略したマニフェストで発生しました。
+前の手順で案内していた「TokenEndpointを削除して認証画面で入力」は使用しないでください。
+
+最新テンプレートと生成スクリプトを取得し、`-TenantId`を指定して生成した
+`WeeklyWindows11PatchReport.local.yaml`をアップロードします。
+YAMLの構文チェックだけではSecurity Copilotの登録要件を検証できません。
 
 ### `AADSTS65002: Consent between first party application ... must be configured via preauthorization`
 
@@ -269,9 +337,8 @@ Security CopilotのMicrosoft管理ファーストパーティ アプリから、
 `OAuthClientCredentialsFlow` を使用します。
 
 1. 以前登録したプラグイン／エージェントを削除または更新
-2. 最新の `WeeklyWindows11PatchReport.yaml` をダウンロードし、
-   `<YOUR-TENANT-ID>` を実際のTenant IDへ置換して再アップロード
-3. 専用EntraアプリのToken endpoint、Client ID、Client Secretを設定
+2. 最新テンプレートと生成スクリプトで、`-TenantId`を指定して生成したマニフェストをアップロード
+3. 専用EntraアプリのClient ID、Client Secret、Resourceを設定
 4. エージェントの代理ユーザー認証も再設定
 5. `ListWindowsQualityUpdates` を再実行
 
@@ -287,14 +354,9 @@ Security CopilotがOAuthトークンエンドポイントの応答をJSONとし�
 応答の先頭が`<`、つまりHTMLだった場合に発生します。クライアントIDやGraph権限ではなく、
 TokenEndpointのURL誤りで発生することが多いエラーです。
 
-本リポジトリの公開マニフェストには、テナント固有値を公開しないため次のプレースホルダーがあります。
-
-```yaml
-TokenEndpoint: https://login.microsoftonline.com/<YOUR-TENANT-ID>/oauth2/v2.0/token
-```
-
-アップロード前に、`<YOUR-TENANT-ID>`全体を実際のDirectory (tenant) IDへ置換してください。
-山括弧`<`と`>`も残さないでください。
+公開テンプレートのToken endpointには`<YOUR-TENANT-ID>`が残っています。
+テンプレートを直接アップロードせず、`-TenantId`を指定して生成したマニフェストを使用します。
+生成されたURLに山括弧`<`と`>`が含まれていないことを確認してください。
 
 正しい例:
 
@@ -313,12 +375,11 @@ TokenEndpoint: https://login.microsoftonline.com/11111111-2222-3333-4444-5555555
 確認と復旧:
 
 1. Entra管理センターの「概要」でDirectory (tenant) IDをコピー
-2. ローカルの`WeeklyWindows11PatchReport.yaml`を開く
-3. `<YOUR-TENANT-ID>`を実際のTenant IDへ置換し、山括弧がないことを確認
-4. 既存のSecurity Copilotプラグイン／エージェントを削除または更新
-5. 編集済みマニフェストを再アップロード
-6. OAuth設定へClientId、ClientSecretの**値**、Resource=`https://graph.microsoft.com`を入力
-7. 再実行
+2. 既存のSecurity Copilotプラグイン／エージェントを削除または更新
+3. 最新テンプレートと生成スクリプトを取得し、`-TenantId`を指定してマニフェストを生成
+4. 生成されたマニフェストをアップロード
+5. OAuth設定へClientId、ClientSecretの**値**、Resource=`https://graph.microsoft.com`を入力
+6. 再実行
 
 それでも同じエラーになる場合は、TokenEndpointをブラウザーで開いてHTMLが表示されるかではなく、
 URLのホストが`login.microsoftonline.com`、パス末尾が`/oauth2/v2.0/token`であることを確認します。
@@ -332,14 +393,15 @@ URLのホストが`login.microsoftonline.com`、パス末尾が`/oauth2/v2.0/tok
 
 1. エラー画面で戻る
 2. 「カスタム プラグインの追加」を再実行
-3. リポジトリの次のマニフェストをダウンロードし、
+3. リポジトリの次のテンプレートと[生成スクリプト](./New-WeeklyWindows11PatchReportManifest.ps1)をダウンロード
    [`WeeklyWindows11PatchReport.yaml`](https://raw.githubusercontent.com/hisashin0728/SecurityCopilot-WeeklyWindows11PatchReport/refs/heads/main/WeeklyWindows11PatchReport.yaml)
-   の `<YOUR-TENANT-ID>` を実際のTenant IDへ置換
-4. 編集した `WeeklyWindows11PatchReport.yaml` を選択
+4. `-TenantId`を指定して生成した `WeeklyWindows11PatchReport.local.yaml` を選択
 5. OpenAPI URL が自動的に読み込まれることを確認
 
 アップロード対象ではないファイル:
 
+- `WeeklyWindows11PatchReport.yaml`（未生成の公開テンプレート）
+- `New-WeeklyWindows11PatchReportManifest.ps1`
 - `WeeklyWindows11PatchReport_GraphAPI_openapi.yaml`
 - `WeeklyWindows11PatchReport_LogicApp_ARM.json`
 - `WeeklyWindows11PatchReport_SampleEmail.html`

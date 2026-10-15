@@ -86,12 +86,18 @@ SkillGroups:
             1. ListWindowsQualityUpdates を次の値で 1 回呼び出す。
                - $top: 12
                - $filter:
-                 `isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry') and microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/qualityUpdateClassification eq 'security'`
+                 `isof('microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry')`
                - $expand:
                  `microsoft.graph.windowsUpdates.qualityUpdateCatalogEntry/productRevisions`
                - $orderby: `releaseDateTime desc`
-            2. 月例セキュリティ更新（qualityUpdateCadence が monthly）を優先し、
+               パラメーターには値だけを渡す。`$filter=` などの名前、バッククォート、
+               URL エンコード済み文字列を値に含めない。分類条件を $filter に追加しない。
+            2. 応答から qualityUpdateClassification が `security` の項目だけを選ぶ。
+               分類がない項目を security と推測しない。
+               月例セキュリティ更新（qualityUpdateCadence が monthly）を優先し、
                productRevisions から product が `Windows 11` の項目だけを抽出する。
+               @odata.nextLink がある場合は取得範囲が限定されていることを明記し、
+               取得した項目に基準がない feature version は判定不能にする。
             3. 各 feature version ごとに、releaseDateTime が最新の productRevision を
                配信基準として保持する。保持項目は version、displayName、releaseDateTime、
                osBuild、knowledgeBaseArticle（存在する場合）。
